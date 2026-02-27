@@ -180,9 +180,9 @@ export default function Home() {
   const isGoalReached = stats ? (stats.todayLearned >= stats.dailyGoal) : false;
 
   return (
-    <div className="min-h-screen bg-background p-6 flex flex-col max-w-md mx-auto relative overflow-hidden">
+    <div className="min-h-screen bg-background p-4 md:p-8 flex flex-col w-full md:max-w-6xl mx-auto relative overflow-y-auto md:overflow-hidden md:justify-center">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6 z-10">
+      <div className="flex justify-between items-center mb-6 z-20 w-full md:absolute md:top-6 md:left-8 md:right-8 md:mb-0 px-2 md:px-0">
         <div className="flex items-center gap-3">
           <div 
             className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-white shadow-md border-2 border-white overflow-hidden bg-white"
@@ -393,9 +393,10 @@ export default function Home() {
           </DialogContent>
       </Dialog>
 
+      <div className="flex flex-col md:flex-row md:items-center md:gap-16 w-full flex-1 md:px-12">
       {/* Stats Hero */}
-      <div className="flex-1 flex flex-col items-center justify-center -mt-4 mb-4 z-0">
-        <div className="relative w-56 h-56 mb-6">
+      <div className="flex-1 flex flex-col items-center justify-center z-0 w-full max-w-md mx-auto">
+        <div className="relative w-48 h-48 md:w-64 md:h-64 mb-6">
           <div className="absolute inset-0 bg-primary/20 rounded-full blur-3xl animate-pulse" />
           <img src={mascot} alt="Mascot" className="relative w-full h-full object-contain drop-shadow-2xl hover:scale-105 transition-transform duration-500" />
           
@@ -454,7 +455,7 @@ export default function Home() {
       </div>
 
       {/* Actions */}
-      <div className="space-y-4 z-10 mb-8">
+      <div className="space-y-4 z-10 mb-8 w-full max-w-md mx-auto md:max-w-sm md:mb-0">
         {!isGoalReached ? (
             <Button 
                 className="w-full h-20 text-2xl font-black rounded-3xl shadow-xl shadow-primary/30 flex items-center justify-between px-8 hover:scale-105 transition-transform"
@@ -523,6 +524,7 @@ export default function Home() {
             )}
           </Button>
         </div>
+      </div>
       </div>
     </div>
   );

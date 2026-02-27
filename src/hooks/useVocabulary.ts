@@ -112,13 +112,12 @@ export function useVocabulary() {
         // Migration check if needed, else set
         setPlan(p);
         
-        // Load plan state (embedded in plan or separate? Requirement says separate logic for "Today")
-        // Let's store daily state in localStorage too for persistence
+        // Load plan state
         const savedState = localStorage.getItem(`${planKey}_state`);
         if (savedState) {
             const s = JSON.parse(savedState);
             if (s.todayDate !== new Date().toDateString()) {
-                // New Day -> Reset counters but keep mistakes? No, Today Mistakes should be reset.
+                // New Day -> Reset counters and todayMistakes
                 setPlanState({ todayDate: new Date().toDateString(), todayLearnedCount: 0, todayMistakes: [] });
             } else {
                 setPlanState(s);
@@ -285,13 +284,17 @@ export function useVocabulary() {
       // So we need to return (DailyGoal - TodayLearned) words.
       const remainingQuota = Math.max(0, plan.dailyLimit - planState.todayLearnedCount);
       
-      // If user requested "Append", bonus words are handled by just increasing quota?
-      // Req 4-3: "Append 10... today learned increases...".
-      // We should probably just ask for N words.
-      // But the "Task" is technically the remaining quota.
-      
       return unlearned.slice(0, remainingQuota);
   }, [plan, planWords, progress, planState.todayLearnedCount]);
+
+  // Shared Logic for recording mistakes
+  // This ensures consistent behavior across Learn, Review, and Test
+  const recordMistake = (word: string) => {
+      setPlanState(ps => ({
+          ...ps,
+          todayMistakes: ps.todayMistakes.includes(word) ? ps.todayMistakes : [...ps.todayMistakes, word]
+      }));
+  };
 
   const recordLearnResult = (word: string, result: 'know' | 'dont-know') => {
       const today = new Date().toDateString();
@@ -328,11 +331,8 @@ export function useVocabulary() {
               newState.stage = 0; // Reset stage
               newState.nextReview = Date.now() + 5 * 60 * 1000; // 5 min review
               
-              // Add to Today Mistakes (Req 4-1)
-              setPlanState(ps => ({
-                  ...ps,
-                  todayMistakes: ps.todayMistakes.includes(word) ? ps.todayMistakes : [...ps.todayMistakes, word]
-              }));
+              // Add to Today Mistakes
+              recordMistake(word);
           } else {
               // Know
               // Advance stage
@@ -345,15 +345,6 @@ export function useVocabulary() {
       });
   };
 
-  const addBonusQuota = (count: number) => {
-      // Just modify plan limit temporarily? Or handle in component?
-      // Req 4-3: "Plan goal 99... append 10... goal remains 99...".
-      // But "Today Learned" increases.
-      // The `getTodayTask` relies on (Limit - Learned). If Limit is 99 and Learned is 99, returns 0.
-      // To get 10 more, we must trick it? 
-      // No, let's just expose a function `fetchMore(count)` that ignores the daily limit.
-  };
-  
   const fetchRawNewWords = useCallback((count: number) => {
       if (!plan) return [];
       let unlearned = planWords.filter(w => !progress[w.word] || progress[w.word].status === 'new');
@@ -361,7 +352,7 @@ export function useVocabulary() {
           // create copy to sort
           unlearned = [...unlearned].sort(() => Math.random() - 0.5);
       } else {
-          unlearned = [...unlearned].sort((a, b) => a.word.localeCompare(b.word));
+          unlearned = unlearned.sort((a, b) => a.word.localeCompare(b.word));
       }
       return unlearned.slice(0, count);
   }, [plan, planWords, progress]);
@@ -400,32 +391,51 @@ export function useVocabulary() {
               newState.errorCount += 1;
               newState.stage = 0; // Reset stage on fail
               newState.nextReview = Date.now() + 5 * 60 * 1000;
-              setPlanState(ps => ({
-                  ...ps,
-                  todayMistakes: ps.todayMistakes.includes(word) ? ps.todayMistakes : [...ps.todayMistakes, word]
-              }));
+              recordMistake(word);
           } else {
               // Scientific mode: Success advances stage
               if (mode === 'scientific') {
                   newState.stage = Math.min(newState.stage + 1, INTERVALS.length - 1);
                   newState.nextReview = Date.now() + INTERVALS[newState.stage] * 60 * 1000;
               }
-              // Today mode: Just verification, maybe don't advance stage? 
-              // Req 6: "Remove from today's review".
+              // Today mode: Just verification
           }
           
           return { ...prev, [word]: newState };
       });
   }, []);
 
+  const recordTestResult = useCallback((word: string, isCorrect: boolean) => {
+      if (!isCorrect) {
+          setProgress(prev => {
+              const current = prev[word] || { 
+                  status: 'new', // Should not happen in test usually unless unlearned
+                  stage: 0, 
+                  nextReview: 0, 
+                  lastReview: 0, 
+                  firstLearnedAt: 0, 
+                  errorCount: 0 
+              };
+              
+              let newState = { ...current };
+              newState.errorCount += 1;
+              // Should we reset stage here too? Usually Test failure is significant.
+              // Let's assume yes, punishment for forgetting.
+              newState.stage = Math.max(0, newState.stage - 1); 
+              newState.lastReview = Date.now();
+              
+              recordMistake(word);
+              return { ...prev, [word]: newState };
+          });
+      }
+  }, []);
+
   const getMistakesList = useCallback((filter: 'all' | 'today' | 'high-freq') => {
-      const todayStart = new Date(new Date().toDateString()).getTime();
       const list = planWords.filter(w => {
           const p = progress[w.word];
           if (!p || p.errorCount === 0) return false;
           if (filter === 'today') {
-              // Check if in todayMistakes list OR lastFailDate is today?
-              // planState.todayMistakes is source of truth for "Added today".
+              // Check if in todayMistakes list
               return planState.todayMistakes.includes(w.word);
           }
           if (filter === 'high-freq') {
@@ -444,12 +454,14 @@ export function useVocabulary() {
   return {
       plan,
       stats,
+      planState, // Exported for direct access if needed
       savePlan,
       getTodayTask,
       fetchRawNewWords,
       recordLearnResult,
       getReviewTask,
       recordReviewResult,
+      recordTestResult,
       getMistakesList,
       allBooks,
       customBooks,

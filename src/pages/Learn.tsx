@@ -102,7 +102,7 @@ export default function Learn() {
     const todayCount = stats?.todayLearned || 0;
     
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-background animate-in fade-in duration-500">
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center p-8 bg-background animate-in fade-in duration-500 overflow-hidden">
         <div className="bg-white p-10 rounded-[3rem] shadow-2xl border-4 border-primary text-center max-w-md w-full">
           <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto mb-6" />
           <h1 className="text-4xl font-black text-primary mb-2">Great Job!</h1><p className="text-lg font-bold text-primary/70 mb-1">太棒了！</p>
@@ -126,40 +126,40 @@ export default function Learn() {
     );
   }
   
-  if (!currentWord && !sessionComplete) return <div className="min-h-screen flex items-center justify-center font-black animate-pulse">Loading task...</div>;
+  if (!currentWord && !sessionComplete) return <div className="min-h-[100dvh] flex items-center justify-center font-black animate-pulse">Loading task...</div>;
   
   const dailyProgress = stats ? Math.min(100, (stats.todayLearned / stats.dailyGoal) * 100) : 0;
 
   return (
-    <div className="min-h-screen flex flex-col p-4 bg-background max-w-md mx-auto relative overflow-hidden">
-      <div className="flex items-center justify-between mb-4 pt-4 px-2">
+    <div className="min-h-[100dvh] flex flex-col p-4 bg-background max-w-md mx-auto relative overflow-hidden">
+      <div className="flex items-center justify-between mb-2 shrink-0 pt-2 px-2">
         <Button variant="ghost" size="icon" onClick={() => setLocation('/')}><ChevronLeft /></Button>
         <div className="text-[10px] font-black text-muted-foreground bg-white px-4 py-1 rounded-full shadow-sm border uppercase tracking-widest">
             Today: {stats?.todayLearned} / {stats?.dailyGoal}
         </div>
         <div className="w-10" />
       </div>
-      <Progress value={dailyProgress} className="h-3 rounded-full mb-8 bg-secondary/10 mx-2" />
+      <Progress value={dailyProgress} className="h-3 rounded-full mb-4 bg-secondary/10 mx-2 shrink-0" />
 
-      <div className="flex-1 flex flex-col items-center justify-center mb-10">
-        <Card className="w-full aspect-[3/4] flex flex-col items-center justify-center p-10 shadow-2xl border-none relative bg-white rounded-[3rem] overflow-hidden">
-          <div className="absolute top-8 left-8 text-[10px] font-black text-primary/30 uppercase tracking-tighter max-w-[150px] truncate">
+      <div className="flex-1 flex flex-col items-center justify-center mb-6 min-h-0">
+        <Card className="w-full flex-1 max-h-[65vh] flex flex-col items-center justify-center p-6 sm:p-10 shadow-2xl border-none relative bg-white rounded-[3rem] overflow-hidden">
+          <div className="absolute top-6 left-8 text-[10px] font-black text-primary/30 uppercase tracking-tighter max-w-[150px] truncate">
             {currentWord?.level}
           </div>
           
-          <div className="flex-1 flex flex-col items-center justify-center w-full">
-            <h2 className="text-6xl font-black text-primary mb-2 text-center tracking-tight break-words max-w-full leading-none">{currentWord?.word}</h2>
-            {currentWord?.phonetic && <div className="text-lg text-muted-foreground font-mono mb-6 bg-gray-50 px-3 py-1 rounded-full">{currentWord.phonetic}</div>}
+          <div className="flex-1 flex flex-col items-center justify-center w-full overflow-y-auto">
+            <h2 className="text-5xl sm:text-6xl font-black text-primary mb-2 text-center tracking-tight break-words max-w-full leading-none">{currentWord?.word}</h2>
+            {currentWord?.phonetic && <div className="text-lg text-muted-foreground font-mono mb-4 bg-gray-50 px-3 py-1 rounded-full">{currentWord.phonetic}</div>}
             
-            <Button variant="ghost" size="icon" className="rounded-full w-14 h-14 mb-8 text-primary bg-primary/5 hover:bg-primary/10 transition-colors" onClick={() => playAudio(currentWord!.word, currentWord?.audioUrl)}>
+            <Button variant="ghost" size="icon" className="rounded-full w-14 h-14 mb-6 text-primary bg-primary/5 hover:bg-primary/10 transition-colors shrink-0" onClick={() => playAudio(currentWord!.word, currentWord?.audioUrl)}>
               <Volume2 className="w-8 h-8" />
             </Button>
 
             {step === 'feedback' && (
-              <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 text-center w-full space-y-6">
+              <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 text-center w-full space-y-4">
                 <div className="bg-sky-50 p-6 rounded-[2rem] border-2 border-sky-100 shadow-inner">
                     <p className="text-xl text-secondary font-black mb-1 opacity-50 uppercase text-[10px] tracking-widest">{currentWord?.pos || 'unknown'}</p>
-                    <p className="text-3xl text-foreground font-black leading-tight">{currentWord?.meaning || 'Thinking...'}</p>
+                    <p className="text-2xl sm:text-3xl text-foreground font-black leading-tight">{currentWord?.meaning || 'Thinking...'}</p>
                 </div>
                 
                 {currentWord?.example && (
@@ -185,7 +185,7 @@ export default function Learn() {
         </Card>
       </div>
 
-      <div className="w-full pb-8 px-2">
+      <div className="w-full pb-6 px-2 shrink-0">
         {step === 'reveal' ? (
              <Button className="w-full h-20 text-2xl font-black rounded-[2rem] bg-primary hover:bg-primary/90 text-primary-foreground border-b-8 border-yellow-600 shadow-xl active:border-b-0 active:translate-y-2 transition-all flex flex-col items-center justify-center leading-none" onClick={handleReveal}>
                 <div className="flex items-center gap-2">

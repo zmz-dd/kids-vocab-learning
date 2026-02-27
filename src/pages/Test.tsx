@@ -12,20 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 export default function Test() {
   const [, setLocation] = useLocation();
-  const { allBooks, progress } = useVocabulary();
-  // We need to re-implement local helpers since hook doesn't expose test-specifics directly in V6
-  // Or better, let's just use what's available and polyfill the test logic inside component
+  const { allBooks, progress, planState, recordTestResult } = useVocabulary();
+  
   const allWords = allBooks.flatMap(b => b.words.map(w => ({...w, bookId: b.id})));
   
-  // Helper to submit test result
-  const submitTestResult = (word: string, correct: boolean) => {
-    // We can use recordReviewResult or just local state?
-    // Req doesn't specify test persistence strictness, but let's try to reuse
-    // But V6 hook removed submitTestResult. Let's just track locally for now or add to hook later.
-    // For now, local only to unblock build.
-    console.log('Test result:', word, correct);
-  };
-
   // Helper to get pool
   const getQuizPool = (range: string, bookId?: string) => {
     let pool = allWords;
@@ -39,6 +29,9 @@ export default function Test() {
        pool = pool.filter(w => progress[w.word]?.lastReview >= todayStart);
     } else if (range === 'all-mistakes') {
        pool = pool.filter(w => (progress[w.word]?.errorCount || 0) > 0);
+    } else if (range === 'today-mistakes') {
+       // Filter from planState.todayMistakes
+       pool = pool.filter(w => planState.todayMistakes.includes(w.word));
     }
     return pool;
   };
@@ -50,7 +43,7 @@ export default function Test() {
     count: 10,
   });
   
-  // TTS Helper for example sentences
+  // TTS Helper
   const playTTS = (text: string) => {
     const u = new SpeechSynthesisUtterance(text); 
     u.lang = 'en-US'; 
@@ -114,7 +107,10 @@ export default function Test() {
     const correct = index === quizData[currentQ].correctIndex;
     setIsCorrect(correct);
     if (correct) setScore(s => s + 1);
-    submitTestResult(quizData[currentQ].question.word, correct);
+    
+    // Record Result
+    recordTestResult(quizData[currentQ].question.word, correct);
+    
     setTimeout(() => {
       if (currentQ < quizData.length - 1) {
         setCurrentQ(q => q + 1); setSelectedOption(null); setIsCorrect(null);
@@ -124,8 +120,8 @@ export default function Test() {
 
   if (step === 'setup') {
     return (
-      <div className="min-h-screen p-6 flex flex-col items-center justify-center max-w-md mx-auto bg-background">
-        <div className="w-full mb-8 flex items-center gap-4">
+      <div className="min-h-[100dvh] p-6 flex flex-col items-center justify-center max-w-md mx-auto bg-background overflow-hidden">
+        <div className="w-full mb-6 flex items-center gap-4 shrink-0">
             <Button variant="ghost" size="icon" onClick={() => setLocation('/')}><ChevronLeft /></Button>
             <div className="flex flex-col">
                 <h1 className="text-3xl font-black text-primary leading-none">Quiz Setup</h1>
@@ -133,60 +129,60 @@ export default function Test() {
             </div>
         </div>
         
-        <Card className="w-full p-6 space-y-6 shadow-xl border-2">
-          <div className="space-y-3">
-            <div className="flex items-baseline gap-2">
-                <div className="flex items-baseline gap-2"><Label className="font-bold text-lg">Quiz Range</Label><span className="text-xs text-muted-foreground">测试范围</span></div>
-                <span className="text-xs text-muted-foreground">测试范围</span>
+        <div className="flex-1 w-full overflow-y-auto pb-6">
+          <Card className="w-full p-6 space-y-6 shadow-xl border-2">
+            <div className="space-y-3">
+              <div className="flex items-baseline gap-2">
+                  <div className="flex items-baseline gap-2"><Label className="font-bold text-lg">Quiz Range</Label><span className="text-xs text-muted-foreground">测试范围</span></div>
+              </div>
+              <RadioGroup value={config.range} onValueChange={(v) => setConfig({...config, range: v})}>
+                <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="all-learned" id="all-learned" /><Label htmlFor="all-learned" className="flex-1 cursor-pointer">全部已学 <span className="text-xs text-muted-foreground ml-1">All Learned</span></Label></div>
+                <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="today-learned" id="today-learned" /><Label htmlFor="today-learned" className="flex-1 cursor-pointer">当天已学 <span className="text-xs text-muted-foreground ml-1">Today's</span></Label></div>
+                <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="book" id="book-range" /><Label htmlFor="book-range" className="flex-1 cursor-pointer">指定单词本 <span className="text-xs text-muted-foreground ml-1">Specific Book</span></Label></div>
+                <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="all-mistakes" id="all-mistakes" /><Label htmlFor="all-mistakes" className="flex-1 cursor-pointer">全部错题 <span className="text-xs text-muted-foreground ml-1">All Errors</span></Label></div>
+                <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="today-mistakes" id="today-mistakes" /><Label htmlFor="today-mistakes" className="flex-1 cursor-pointer">当天错题 <span className="text-xs text-muted-foreground ml-1">Today's Errors</span></Label></div>
+              </RadioGroup>
             </div>
-            <RadioGroup value={config.range} onValueChange={(v) => setConfig({...config, range: v})}>
-              <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="all-learned" id="all-learned" /><Label htmlFor="all-learned" className="flex-1 cursor-pointer">全部已学 <span className="text-xs text-muted-foreground ml-1">All Learned</span></Label></div>
-              <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="today-learned" id="today-learned" /><Label htmlFor="today-learned" className="flex-1 cursor-pointer">当天已学 <span className="text-xs text-muted-foreground ml-1">Today's</span></Label></div>
-              <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="book" id="book-range" /><Label htmlFor="book-range" className="flex-1 cursor-pointer">指定单词本 <span className="text-xs text-muted-foreground ml-1">Specific Book</span></Label></div>
-              <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="all-mistakes" id="all-mistakes" /><Label htmlFor="all-mistakes" className="flex-1 cursor-pointer">全部错题 <span className="text-xs text-muted-foreground ml-1">All Errors</span></Label></div>
-              <div className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary/10"><RadioGroupItem value="today-mistakes" id="today-mistakes" /><Label htmlFor="today-mistakes" className="flex-1 cursor-pointer">当天错题 <span className="text-xs text-muted-foreground ml-1">Today's Errors</span></Label></div>
-            </RadioGroup>
-          </div>
 
-          {config.range === 'book' && (
-            <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
-              <Label>Select Book / 选择词书</Label>
-              <Select value={config.bookId} onValueChange={(v) => setConfig({...config, bookId: v})}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Any Book (所有词书)</SelectItem>
-                  {allBooks.map(b => (<SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>))}
-                </SelectContent>
-              </Select>
+            {config.range === 'book' && (
+              <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+                <Label>Select Book / 选择词书</Label>
+                <Select value={config.bookId} onValueChange={(v) => setConfig({...config, bookId: v})}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any Book (所有词书)</SelectItem>
+                    {allBooks.map(b => (<SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            
+            <div className="space-y-3">
+              <div className="flex items-baseline gap-2">
+                  <div className="flex items-baseline gap-2"><Label className="font-bold">Question Count</Label><span className="text-xs text-muted-foreground">题目数量</span></div>
+              </div>
+              <div className="flex gap-2">
+                {[5, 10, 20, 50].map(num => (
+                  <Button key={num} variant={config.count === num ? "default" : "outline"} size="sm" onClick={() => setConfig({...config, count: num})} className="flex-1 rounded-xl">
+                    {num}
+                  </Button>
+                ))}
+              </div>
             </div>
-          )}
-          
-          <div className="space-y-3">
-            <div className="flex items-baseline gap-2">
-                <div className="flex items-baseline gap-2"><Label className="font-bold">Question Count</Label><span className="text-xs text-muted-foreground">题目数量</span></div>
-                <span className="text-xs text-muted-foreground">题目数量</span>
-            </div>
-            <div className="flex gap-2">
-              {[5, 10, 20, 50].map(num => (
-                <Button key={num} variant={config.count === num ? "default" : "outline"} size="sm" onClick={() => setConfig({...config, count: num})} className="flex-1 rounded-xl">
-                  {num}
-                </Button>
-              ))}
-            </div>
-          </div>
 
-          <Button className="w-full h-14 text-xl font-black rounded-2xl shadow-lg shadow-primary/20 flex flex-col items-center justify-center leading-none" onClick={startQuiz}>
-            <span>Start Quiz</span>
-            <span className="text-xs font-medium opacity-80 mt-1">开始测试</span>
-          </Button>
-        </Card>
+            <Button className="w-full h-14 text-xl font-black rounded-2xl shadow-lg shadow-primary/20 flex flex-col items-center justify-center leading-none" onClick={startQuiz}>
+              <span>Start Quiz</span>
+              <span className="text-xs font-medium opacity-80 mt-1">开始测试</span>
+            </Button>
+          </Card>
+        </div>
       </div>
     );
   }
 
   if (step === 'result') {
     return (
-      <div className="min-h-screen p-6 flex flex-col items-center justify-center max-w-md mx-auto text-center bg-background">
+      <div className="min-h-[100dvh] p-6 flex flex-col items-center justify-center max-w-md mx-auto text-center bg-background">
         <h1 className="text-4xl font-black text-primary mb-1">Results</h1><p className="text-lg font-bold text-primary/60 mb-4">测试结果</p>
         <div className="text-7xl font-black text-accent mb-8">{score} / {quizData.length}</div>
         <div className="bg-white p-6 rounded-3xl w-full mb-8 shadow-inner border-2 border-dashed border-gray-200">
@@ -214,21 +210,21 @@ export default function Test() {
   const progressPercent = ((currentQ) / quizData.length) * 100;
 
   return (
-    <div className="min-h-screen p-4 flex flex-col max-w-md mx-auto bg-background">
-      <div className="flex justify-between items-center mb-6 pt-2">
+    <div className="min-h-[100dvh] p-4 flex flex-col max-w-md mx-auto bg-background overflow-hidden">
+      <div className="flex justify-between items-center mb-4 shrink-0 pt-2">
         <Button variant="ghost" size="sm" onClick={() => setLocation('/')} className="rounded-full">Exit</Button>
         <div className="font-black text-muted-foreground bg-gray-100 px-3 py-1 rounded-full text-xs">
             QUIZ: {currentQ + 1} OF {quizData.length}
         </div>
       </div>
       
-      <Progress value={progressPercent} className="h-3 rounded-full mb-10 bg-secondary/10" />
+      <Progress value={progressPercent} className="h-3 rounded-full mb-6 bg-secondary/10 shrink-0" />
       
-      <div className="flex-1 flex flex-col justify-center">
-        <div className="text-center mb-10">
-          <h2 className="text-5xl font-black text-primary mb-2 tracking-tight">{current.question.word}</h2>
-          {current.question.phonetic && <div className="text-lg text-muted-foreground font-mono mb-6 bg-gray-50 px-3 py-1 rounded-full inline-block">{current.question.phonetic}</div>}
-          <div className="flex justify-center mb-6">
+      <div className="flex-1 flex flex-col justify-center overflow-y-auto min-h-0">
+        <div className="text-center mb-6 shrink-0">
+          <h2 className="text-5xl font-black text-primary mb-2 tracking-tight leading-tight">{current.question.word}</h2>
+          {current.question.phonetic && <div className="text-lg text-muted-foreground font-mono mb-4 bg-gray-50 px-3 py-1 rounded-full inline-block">{current.question.phonetic}</div>}
+          <div className="flex justify-center mb-4">
             <Button variant="ghost" size="icon" className="rounded-full w-14 h-14 bg-primary/5 text-primary" onClick={() => playAudio(current.question.word, current.question.audioUrl)}>
                <Volume2 className="w-8 h-8" />
             </Button>
@@ -236,7 +232,7 @@ export default function Test() {
           <p className="text-muted-foreground font-medium uppercase tracking-widest text-xs opacity-50">{current.question.pos}</p>
         </div>
         
-        <div className="space-y-4">
+        <div className="space-y-3 pb-6">
           {current.options.map((opt, idx) => {
             const isSelected = selectedOption === idx;
             const isCorrectOption = idx === current.correctIndex;
@@ -247,14 +243,14 @@ export default function Test() {
               else bgClass = "opacity-30 border-gray-100";
             }
             return (
-              <Button key={idx} variant="outline" className={`w-full h-20 text-lg font-bold rounded-3xl whitespace-normal leading-tight px-6 ${bgClass}`} onClick={() => handleAnswer(idx)} disabled={selectedOption !== null}>
-                {opt.meaning}
+              <Button key={idx} variant="outline" className={`w-full h-16 sm:h-20 text-base sm:text-lg font-bold rounded-3xl whitespace-normal leading-tight px-6 ${bgClass}`} onClick={() => handleAnswer(idx)} disabled={selectedOption !== null}>
+                <span className="line-clamp-2">{opt.meaning}</span>
               </Button>
             );
           })}
         </div>
         
-        <div className="mt-6 flex flex-col items-center justify-center space-y-4">
+        <div className="mt-2 flex flex-col items-center justify-center space-y-4 min-h-[4rem] shrink-0">
           {isCorrect === true && <div className="text-green-600 font-black flex items-center gap-2 animate-bounce"><CheckCircle2 /> CORRECT! / 回答正确</div>}
           {isCorrect === false && <div className="text-red-500 font-black flex items-center gap-2 animate-shake"><XCircle /> INCORRECT / 回答错误</div>}
           
