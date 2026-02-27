@@ -182,7 +182,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background p-4 md:p-8 flex flex-col w-full md:max-w-6xl mx-auto relative overflow-y-auto md:overflow-hidden md:justify-center">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6 z-20 w-full md:absolute md:top-6 md:left-8 md:right-8 md:mb-0 px-2 md:px-0">
+      <div className="flex justify-between items-center mb-6 z-20 w-full md:absolute md:top-6 md:left-8 md:right-8 md:mb-0 px-2 md:px-0" style={{maxWidth: '1010px', margin: '0 auto', right: 0, left: 0}}>
         <div className="flex items-center gap-3">
           <div 
             className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-white shadow-md border-2 border-white overflow-hidden bg-white"
