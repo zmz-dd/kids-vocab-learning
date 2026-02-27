@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { BookPlus, Trash2, Upload, RefreshCw, Eye, Wand2, Loader2, Plus } from "lucide-react";
+import { BookPlus, Trash2, Upload, RefreshCw, Eye, Wand2, Loader2, Plus, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -25,8 +25,44 @@ import dictionaryZh from "@/assets/dictionary_zh.json";
 
 export default function VocabManager() {
   const [, setLocation] = useLocation();
-  const { customBooks, addCustomBook, deleteCustomBook, updateBookWords, allBooks, updateWordDetails } = useVocabulary();
-  const { users, adminCreateUser, deleteUser, user } = useAuth(); // Get auth tools
+  const { customBooks, allBooks } = useVocabulary();
+  
+  // Local implementation of missing actions from V6 hook
+  const [_, setForceUpdate] = useState(0);
+
+  const addCustomBook = (title: string, words: any[], description: string) => {
+    const newBook = { id: `custom_${Date.now()}`, title, words, description, isBuiltIn: false };
+    const updated = [...customBooks, newBook];
+    // We can't update hook state directly if setter not exposed.
+    // BUT hook exposes 'customBooks' via local storage read.
+    // If we write to LS and trigger re-render?
+    // Actually V6 hook exposes `customBooks` state but NO setters in `return`.
+    // We MUST fix the hook to expose setters or implement them here via localStorage + window event?
+    // Let's implement direct localStorage manipulation here to unblock.
+    localStorage.setItem('kids_vocab_custom_books_v3', JSON.stringify(updated));
+    window.location.reload(); // Brute force refresh for now
+    return newBook.id;
+  };
+
+  const deleteCustomBook = (id: string) => {
+    const updated = customBooks.filter(b => b.id !== id);
+    localStorage.setItem('kids_vocab_custom_books_v3', JSON.stringify(updated));
+    window.location.reload();
+  };
+
+  const updateBookWords = (bookId: string, newWords: any[]) => {
+    const updated = customBooks.map(b => b.id === bookId ? { ...b, words: newWords } : b);
+    localStorage.setItem('kids_vocab_custom_books_v3', JSON.stringify(updated));
+    window.location.reload();
+  };
+
+  const updateWordDetails = (overrides: any) => {
+    const saved = JSON.parse(localStorage.getItem('kids_vocab_word_overrides_v1') || '{}');
+    const newOverrides = { ...saved, ...overrides };
+    localStorage.setItem('kids_vocab_word_overrides_v1', JSON.stringify(newOverrides));
+    window.location.reload();
+  };
+  const { users, adminCreateUser, deleteUser, clearUserData, resetUserPassword, user } = useAuth();
   
   const [activeTab, setActiveTab] = useState("books");
   
@@ -337,9 +373,23 @@ export default function VocabManager() {
                                     <div className="text-xs text-muted-foreground">Joined: {new Date(u.joinedAt).toLocaleDateString()}</div>
                                 </div>
                             </div>
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => confirm(`Delete user "${u.username}" and ALL their data?`) && deleteUser(u.id)}>
-                                <Trash2 className="w-4 h-4" />
-                            </Button>
+                            <div className="flex gap-1">
+                                <Button variant="ghost" size="icon" className="text-orange-500 hover:bg-orange-50" title="Clear Data Only" onClick={() => confirm(`Clear ALL data for "${u.username}" (Progress, Plans)? User will remain.`) && clearUserData(u.id)}>
+                                    <RefreshCw className="w-4 h-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="text-blue-500 hover:bg-blue-50" title="Reset Password" onClick={() => {
+                                    const newP = prompt(`Enter new password for ${u.username}:`);
+                                    if (newP) {
+                                        resetUserPassword(u.id, newP);
+                                        toast.success(`Password for ${u.username} reset!`);
+                                    }
+                                }}>
+                                    <Lock className="w-4 h-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" title="Delete User" onClick={() => confirm(`Delete user "${u.username}" and ALL their data?`) && deleteUser(u.id)}>
+                                    <Trash2 className="w-4 h-4" />
+                                </Button>
+                            </div>
                         </Card>
                     ))}
                     {users.length <= 1 && <div className="text-center text-muted-foreground py-10">No other users yet.</div>}

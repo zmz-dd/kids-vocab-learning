@@ -8,7 +8,7 @@ export interface User {
   username: string;
   password: string;
   avatarColor: string;
-  avatarId?: string; // New: Store avatar ID (red, blue, etc.)
+  avatarId?: string; 
   joinedAt: number;
   isAdmin?: boolean; 
 }
@@ -20,6 +20,8 @@ export interface AuthState {
   register: (username: string, pass: string, color?: string, avatarId?: string) => boolean;
   adminCreateUser: (username: string, pass: string, color?: string, avatarId?: string) => boolean;
   deleteUser: (userId: string) => void;
+  clearUserData: (userId: string) => void; // New: Clear data without deleting user
+  resetUserPassword: (userId: string, newPass: string) => void;
   logout: () => void;
 }
 
@@ -77,6 +79,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   };
 
   const register = (username: string, pass: string, color?: string, avatarId?: string) => {
+    if (users.length >= 101) return false; // Limit 100 users + 1 admin
     if (users.some(u => u.username === username)) return false;
     
     const newUser: User = {
@@ -84,7 +87,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       username,
       password: pass,
       avatarColor: color || COLORS[users.length % COLORS.length],
-      avatarId: avatarId, // Store ID
+      avatarId: avatarId, 
       joinedAt: Date.now(),
       isAdmin: false
     };
@@ -95,6 +98,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   };
 
   const adminCreateUser = (username: string, pass: string, color?: string, avatarId?: string) => {
+    if (users.length >= 101) return false;
     if (users.some(u => u.username === username)) return false;
     
     const newUser: User = {
@@ -111,12 +115,24 @@ export function UserProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
+  const clearUserData = (userId: string) => {
+      // Clear specific user data keys
+      localStorage.removeItem(`kids_vocab_progress_v5_${userId}`);
+      localStorage.removeItem(`kids_vocab_plan_v5_${userId}`);
+      localStorage.removeItem(`kids_vocab_test_history_v5_${userId}`);
+      // Legacy cleanup
+      localStorage.removeItem(`kids_vocab_progress_v4_${userId}`);
+      localStorage.removeItem(`kids_vocab_settings_v4_${userId}`);
+      localStorage.removeItem(`kids_vocab_today_v4_${userId}`);
+  };
+
+  const resetUserPassword = (userId: string, newPass: string) => {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, password: newPass } : u));
+  };
+
   const deleteUser = (userId: string) => {
     setUsers(prev => prev.filter(u => u.id !== userId));
-    // Also clean up their data
-    localStorage.removeItem(`kids_vocab_progress_v4_${userId}`);
-    localStorage.removeItem(`kids_vocab_settings_v4_${userId}`);
-    localStorage.removeItem(`kids_vocab_today_v4_${userId}`);
+    clearUserData(userId);
   };
 
   const logout = () => {
@@ -124,7 +140,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <UserContext.Provider value={{ user, users, login, register, adminCreateUser, deleteUser, logout }}>
+    <UserContext.Provider value={{ user, users, login, register, adminCreateUser, deleteUser, clearUserData, resetUserPassword, logout }}>
       {children}
     </UserContext.Provider>
   );

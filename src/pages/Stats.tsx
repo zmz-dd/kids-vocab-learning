@@ -9,13 +9,30 @@ import { ChevronLeft, Target, BookOpen, Star } from "lucide-react";
 
 export default function Stats() {
   const [, setLocation] = useLocation();
-  const { stats } = useVocabulary();
+  const { stats, progress, allBooks, plan } = useVocabulary();
+
+  if (!stats) return <div className="p-10 text-center">Loading stats...</div>;
+
+  // Calculate mastered and byBook breakdown locally since V6 stats object is simpler
+  const masteredCount = Object.values(progress).filter(p => p.status === 'mastered').length;
+  // stats.learnedUnique is "Learning + Mastered" (status !== 'new')
+  const learningCount = stats.learnedUnique - masteredCount; 
+  const newCount = stats.totalWords - stats.learnedUnique;
 
   const pieData = [
-    { name: 'Mastered (掌握)', value: stats.mastered, color: '#FB8500' }, 
-    { name: 'Learning (学习中)', value: stats.learned - stats.mastered, color: '#FFB703' }, 
-    { name: 'New (未学)', value: stats.total - stats.learned, color: '#E5E7EB' }, 
+    { name: 'Mastered (掌握)', value: masteredCount, color: '#FB8500' }, 
+    { name: 'Learning (学习中)', value: learningCount, color: '#FFB703' }, 
+    { name: 'New (未学)', value: newCount, color: '#E5E7EB' }, 
   ];
+
+  // Calculate per-book stats
+  const byBookDetailed = allBooks.map(book => {
+      const bookWords = book.words;
+      const total = bookWords.length;
+      const learned = bookWords.filter(w => progress[w.word] && progress[w.word].status !== 'new').length;
+      const mastered = bookWords.filter(w => progress[w.word] && progress[w.word].status === 'mastered').length;
+      return { id: book.id, title: book.title, total, learned, mastered };
+  });
 
   return (
     <div className="min-h-screen p-6 bg-background max-w-md mx-auto">
@@ -43,8 +60,8 @@ export default function Stats() {
                 </ResponsiveContainer>
             </div>
             <div className="grid grid-cols-2 gap-4 mt-4">
-                <div className="bg-gray-50 p-3 rounded-2xl"><div className="text-2xl font-black text-secondary">{stats.learned}</div><div className="text-[10px] font-bold text-muted-foreground uppercase">Learned</div></div>
-                <div className="bg-gray-50 p-3 rounded-2xl"><div className="text-2xl font-black text-accent">{stats.mastered}</div><div className="text-[10px] font-bold text-muted-foreground uppercase">Mastered</div></div>
+                <div className="bg-gray-50 p-3 rounded-2xl"><div className="text-2xl font-black text-secondary">{stats.learnedUnique}</div><div className="text-[10px] font-bold text-muted-foreground uppercase">Learned</div></div>
+                <div className="bg-gray-50 p-3 rounded-2xl"><div className="text-2xl font-black text-accent">{masteredCount}</div><div className="text-[10px] font-bold text-muted-foreground uppercase">Mastered</div></div>
             </div>
           </div>
         </Card>
@@ -54,8 +71,8 @@ export default function Stats() {
           <h2 className="text-xl font-black text-primary px-2 flex items-center gap-2">
               <BookOpen className="w-5 h-5" /> Book Details
           </h2>
-          {Object.entries(stats.byBookDetailed).map(([id, data]: [string, any]) => (
-            <Card key={id} className="p-6 rounded-3xl border-none shadow-md bg-white">
+          {byBookDetailed.map((data) => (
+            <Card key={data.id} className="p-6 rounded-3xl border-none shadow-md bg-white">
               <div className="flex justify-between items-start mb-4">
                 <div>
                     <span className="font-black text-lg text-foreground block">{data.title}</span>

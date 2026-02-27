@@ -5,58 +5,38 @@ import { useVocabulary, type Word } from "@/hooks/useVocabulary";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle2, Volume2, ArrowRight, X, Check, SkipForward, ChevronLeft } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Volume2, X, Check } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Review() {
-  const [, setLocation] = useLocation();
-  const { getReviewQueue, submitWordResult } = useVocabulary();
+  const [location, setLocation] = useLocation();
+  const { getReviewTask, recordReviewResult } = useVocabulary();
+  
+  const [mode, setMode] = useState<'scientific' | 'today'>('today');
+  
   const [queue, setQueue] = useState<Word[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [step, setStep] = useState<'reveal' | 'feedback'>('reveal');
   const [sessionComplete, setSessionComplete] = useState(false);
-  const [showAnswer, setShowAnswer] = useState(false);
-  
+
+  // Load queue based on mode
   useEffect(() => {
-    let reviews = getReviewQueue();
-    
-    // For now, getReviewQueue doesn't take arguments in hook signature yet.
-    // I need to update the hook signature or just filter here.
-    // But since getReviewQueue filters by nextReview <= Date.now(), 
-    // today's learned words are usually scheduled for +5min/30min/12h.
-    // If they are due, they appear. 
-    // User wants "Immediate review of today's learned".
-    // I should check if there are words learned today that are NOT in review queue yet (because interval hasn't passed).
-    // But "Immediate" usually means "I want to review now even if not due".
-    // Let's modify logic: if queue empty, pull random learned words from today?
-    // Actually, I'll rely on the hook update I made previously (if I did? I might have missed updating getReviewQueue arg).
-    // Let's check useVocabulary.ts again. I didn't update getReviewQueue signature in previous step.
-    
-    // So I will just use what I have. If empty, I will fallback to "Today's Learned" manually here.
-    if (reviews.length === 0) {
-        // We need access to all learned words to filter today's.
-        // But we don't have direct access to 'progress' here easily without importing it.
-        // Let's fix this by using the 'stats' or just accepting empty queue for now 
-        // until I can update hook signature properly.
-        // Wait, I can't pass 'true' if the function doesn't accept it.
-    }
-    
-    // For review, we can take up to 20 or all
-    const initialQueue = reviews.slice(0, 20);
-    setQueue(initialQueue);
-    
-    if (initialQueue.length === 0) {
-        setSessionComplete(true);
-    }
-  }, []);
+    const q = getReviewTask(mode);
+    setQueue(q);
+    setCurrentIndex(0);
+    setSessionComplete(q.length === 0);
+    setStep('reveal');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   const currentWord = queue[currentIndex];
-  
+
   const playTTS = (text: string) => {
     const u = new SpeechSynthesisUtterance(text); 
-    u.lang = 'en-US'; 
-    u.rate = 0.8;
+    u.lang = 'en-US'; u.rate = 0.8;
     window.speechSynthesis.speak(u);
   };
-
+  
   const playAudio = (text: string, url?: string) => {
     if (url && url !== '') {
         const audio = new Audio(url);
@@ -66,133 +46,101 @@ export default function Review() {
     }
   };
 
-  useEffect(() => { 
-    if (currentWord) { 
-        playAudio(currentWord.word, currentWord.audioUrl); 
-        setShowAnswer(false); 
-    } 
+  // Auto-play audio on mount/change
+  useEffect(() => {
+      if (currentWord) {
+          playAudio(currentWord.word, currentWord.audioUrl);
+          setStep('reveal');
+      }
   }, [currentWord]);
 
-  const handleInteraction = (type: 'know' | 'dont-know' | 'skip') => {
-    if (type === 'skip') { advance(); return; }
-    submitWordResult(currentWord.word, type === 'know' ? 'good' : 'hard');
-    setShowAnswer(true);
+  const handleReveal = () => {
+      setStep('feedback');
   };
-  
-  const advance = () => {
-    if (currentIndex < queue.length - 1) { 
-        setCurrentIndex(prev => prev + 1); 
-        setShowAnswer(false); 
-    } else { 
-        setSessionComplete(true); 
+
+  const handleFeedback = (type: 'know' | 'dont-know') => {
+    recordReviewResult(currentWord.word, type, mode);
+    // Auto advance
+    if (currentIndex < queue.length - 1) {
+        setCurrentIndex(p => p + 1);
+        setStep('reveal');
+    } else {
+        setSessionComplete(true);
     }
   };
 
   if (sessionComplete) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-background animate-in fade-in duration-500">
-        <div className="bg-white p-10 rounded-[3rem] shadow-2xl border-4 border-primary text-center max-w-md w-full">
-          <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto mb-6" />
-          <h1 className="text-4xl font-black text-primary mb-2">All Caught Up!</h1>
-          <p className="text-muted-foreground mb-10 font-bold">No more reviews for now.</p>
-          <div className="space-y-4">
-            <Button variant="outline" className="w-full h-16 text-xl font-bold rounded-2xl border-2 flex flex-col items-center justify-center leading-none" onClick={() => setLocation('/')}>
-                <span>Back Home</span>
-                <span className="text-[10px] opacity-50">返回首页</span>
-            </Button>
-          </div>
+      return (
+        <div className="min-h-screen p-6 flex flex-col items-center justify-center max-w-md mx-auto bg-background text-center">
+            <CheckCircle2 className="w-20 h-20 text-green-500 mb-4" />
+            <h1 className="text-3xl font-black text-primary mb-2">Review Complete!</h1>
+            <p className="text-muted-foreground mb-8">You've reviewed all words for this session.<br/><span className="text-sm">本轮复习完成！</span></p>
+            <Button className="w-full h-14 text-xl font-bold rounded-2xl" onClick={() => setLocation('/')}>Back Home</Button>
         </div>
-      </div>
-    );
+      );
   }
-
-  if (!currentWord) return <div className="min-h-screen flex items-center justify-center font-black animate-pulse">Checking reviews...</div>;
   
-  const progressPercent = queue.length > 0 ? ((currentIndex) / queue.length) * 100 : 100;
+  if (!currentWord) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+
+  const progressPercent = ((currentIndex) / queue.length) * 100;
 
   return (
-    <div className="min-h-screen flex flex-col p-4 bg-background max-w-md mx-auto relative overflow-hidden bg-amber-50/30">
-      <div className="flex items-center justify-between mb-4 pt-4 px-2">
+    <div className="min-h-screen p-4 flex flex-col max-w-md mx-auto bg-background">
+      <div className="flex items-center justify-between mb-4">
         <Button variant="ghost" size="icon" onClick={() => setLocation('/')}><ChevronLeft /></Button>
-        <div className="text-[10px] font-black text-muted-foreground bg-white px-4 py-1 rounded-full shadow-sm border uppercase tracking-widest">
-            REVIEW: {currentIndex + 1} / {queue.length}
-        </div>
+        <Tabs value={mode} onValueChange={(v) => setMode(v as any)} className="w-[200px]">
+            <TabsList className="grid w-full grid-cols-2 h-8">
+                <TabsTrigger value="today" className="text-xs">Today</TabsTrigger>
+                <TabsTrigger value="scientific" className="text-xs">Scientific</TabsTrigger>
+            </TabsList>
+        </Tabs>
         <div className="w-10" />
       </div>
-      <Progress value={progressPercent} className="h-2 rounded-full mb-8 bg-secondary/10 mx-2" />
 
-      <div className="flex-1 flex flex-col items-center justify-center mb-10">
-        <Card className="w-full aspect-[3/4] flex flex-col items-center justify-center p-10 shadow-2xl border-none relative bg-white rounded-[3rem] overflow-hidden">
-          <div className="absolute top-8 left-8 text-[10px] font-black text-primary/30 uppercase tracking-tighter max-w-[150px] truncate">
-            {currentWord.level}
-          </div>
-          
-          <div className="flex-1 flex flex-col items-center justify-center w-full">
-            <h2 className="text-6xl font-black text-primary mb-2 text-center tracking-tight break-words max-w-full leading-none">{currentWord.word}</h2>
-            {currentWord.phonetic && <div className="text-lg text-muted-foreground font-mono mb-6 bg-gray-50 px-3 py-1 rounded-full">{currentWord.phonetic}</div>}
+      <div className="text-center mb-2">
+         <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+            {mode === 'today' ? 'IMMEDIATE REVIEW / 立即复习' : 'EBBINGHAUS REVIEW / 科学复习'}
+         </span>
+      </div>
+      
+      <Progress value={progressPercent} className="h-2 rounded-full mb-6 bg-secondary/10" />
+
+      <div className="flex-1 flex flex-col items-center justify-center mb-8">
+        <Card className="w-full aspect-[3/4] flex flex-col items-center justify-center p-8 shadow-xl border-none relative bg-white rounded-[2.5rem]">
+            <h2 className="text-5xl font-black text-primary mb-4 text-center leading-none">{currentWord.word}</h2>
             
-            <Button variant="ghost" size="icon" className="rounded-full w-14 h-14 mb-8 text-primary bg-primary/5 hover:bg-primary/10 transition-colors" onClick={() => playAudio(currentWord.word, currentWord.audioUrl)}>
-              <Volume2 className="w-8 h-8" />
-            </Button>
+            {/* Phonetic on Front now */}
+            {currentWord.phonetic && <div className="text-lg text-muted-foreground font-mono mb-6 bg-gray-50 px-3 py-1 rounded-full">{currentWord.phonetic}</div>}
 
-            {showAnswer && (
-              <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 text-center w-full space-y-6">
-                <div className="bg-sky-50 p-6 rounded-[2rem] border-2 border-sky-100 shadow-inner">
-                    <p className="text-xl text-secondary font-black mb-1 opacity-50 uppercase text-[10px] tracking-widest">{currentWord.pos || 'unknown'}</p>
-                    <p className="text-3xl text-foreground font-black leading-tight">{currentWord.meaning || 'Think again!'}</p>
-                </div>
-                
-                {currentWord.example && (
-                    <div className="w-full flex flex-col gap-2">
-                        <div className="flex items-start gap-3 text-left bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                            <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-8 w-8 shrink-0 rounded-full bg-primary/10 text-primary mt-1"
-                                onClick={(e) => { e.stopPropagation(); playAudio(currentWord.example!, currentWord.exampleAudioUrl); }}
-                            >
-                                <Volume2 className="w-4 h-4" />
-                            </Button>
-                            <div className="flex-1">
-                                <p className="text-sm text-gray-700 font-medium leading-relaxed">"{currentWord.example}"</p>
-                                <p className="text-[10px] text-muted-foreground mt-1 font-bold uppercase tracking-wider">Example / 例句</p>
-                            </div>
-                        </div>
+            <Button variant="ghost" size="icon" className="rounded-full w-12 h-12 mb-6 text-primary bg-primary/5" onClick={() => playAudio(currentWord.word, currentWord.audioUrl)}>
+              <Volume2 className="w-6 h-6" />
+            </Button>
+            
+            {step === 'feedback' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 text-center w-full space-y-4">
+                    <div className="bg-sky-50 p-4 rounded-2xl border border-sky-100">
+                        <p className="text-lg text-secondary font-black mb-1 opacity-50 uppercase text-[10px]">{currentWord.pos || 'unknown'}</p>
+                        <p className="text-2xl text-foreground font-black">{currentWord.meaning}</p>
                     </div>
-                )}
-              </div>
+                </div>
             )}
-          </div>
         </Card>
       </div>
-
-      <div className="w-full pb-8 px-2">
-        {!showAnswer ? (
-          <div className="grid grid-cols-3 gap-4">
-            <Button variant="outline" className="h-20 flex flex-col gap-0 rounded-3xl border-2 border-gray-100 text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-all active:scale-95" onClick={() => handleInteraction('skip')}>
-              <SkipForward className="w-6 h-6 mb-1" />
-              <span className="text-[10px] font-black uppercase leading-none">Skip</span>
-              <span className="text-[9px] font-medium leading-none mt-0.5">跳过</span>
+      
+      <div className="w-full pb-8">
+        {step === 'reveal' ? (
+             <Button className="w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-xl shadow-xl" onClick={handleReveal}>
+                View Meaning / 查看释义
             </Button>
-            <Button className="h-20 flex flex-col gap-0 rounded-3xl bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-100 transition-all active:scale-95" onClick={() => handleInteraction('dont-know')}>
-              <X className="w-6 h-6 mb-1" />
-              <span className="text-[10px] font-black uppercase leading-none">Forgot</span>
-              <span className="text-[9px] font-medium leading-none mt-0.5">不认识</span>
-            </Button>
-            <Button className="h-20 flex flex-col gap-0 rounded-3xl bg-green-500 hover:bg-green-600 text-white shadow-lg shadow-green-100 transition-all active:scale-95" onClick={() => handleInteraction('know')}>
-              <Check className="w-6 h-6 mb-1" />
-              <span className="text-[10px] font-black uppercase leading-none">Know</span>
-              <span className="text-[9px] font-medium leading-none mt-0.5">认识</span>
-            </Button>
-          </div>
         ) : (
-          <Button className="w-full h-20 text-2xl font-black rounded-[2rem] bg-primary hover:bg-primary/90 text-primary-foreground border-b-8 border-yellow-600 shadow-xl active:border-b-0 active:translate-y-2 transition-all flex flex-col items-center justify-center leading-none" onClick={advance}>
-            <div className="flex items-center gap-2">
-                <span>NEXT WORD</span>
-                <ArrowRight className="w-6 h-6" />
+            <div className="grid grid-cols-2 gap-4">
+                <Button className="h-16 rounded-2xl bg-red-500 hover:bg-red-600 text-white font-bold text-lg shadow-lg shadow-red-100" onClick={() => handleFeedback('dont-know')}>
+                    <X className="mr-2 w-5 h-5" /> Forgot / 不认识
+                </Button>
+                <Button className="h-16 rounded-2xl bg-green-500 hover:bg-green-600 text-white font-bold text-lg shadow-lg shadow-green-100" onClick={() => handleFeedback('know')}>
+                    <Check className="mr-2 w-5 h-5" /> Know / 认识
+                </Button>
             </div>
-            <span className="text-xs font-medium opacity-80 mt-1">下一个</span>
-          </Button>
         )}
       </div>
     </div>

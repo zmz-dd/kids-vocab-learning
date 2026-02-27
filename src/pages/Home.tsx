@@ -1,11 +1,11 @@
 
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useVocabulary } from "@/hooks/useVocabulary";
+import { useVocabulary, type PlanSettings } from "@/hooks/useVocabulary";
 import { useAuth } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Settings as SettingsIcon, BookOpen, Trophy, BarChart3, Play, XCircle, LogOut, Crown, BookPlus, PlusCircle, AlertTriangle, History } from "lucide-react";
+import { Settings as SettingsIcon, BookOpen, Trophy, BarChart3, Play, XCircle, LogOut, Crown, BookPlus, PlusCircle, AlertTriangle, History, RefreshCcw } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +29,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import mascot from "@/assets/mascot.png";
 import { toast } from "sonner";
 
-// Import avatars
 import red from "@/assets/avatars/red.png";
 import yellow from "@/assets/avatars/yellow.png";
 import blue from "@/assets/avatars/blue.png";
@@ -43,64 +42,142 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const { user, logout } = useAuth();
   const { 
+    plan,
     stats, 
-    settings, 
-    setSettings, 
-    getReviewQueue,
+    savePlan,
     allBooks,
-    planStats,
-    addBonusWords,
-    resetTodayProgress,
-    todayState
+    getReviewTask,
+    getMistakesList
   } = useVocabulary();
 
   const [reviewCount, setReviewCount] = useState(0);
+  const [mistakeCount, setMistakeCount] = useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [pendingSettings, setPendingSettings] = useState(settings);
+  const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
+  
+  // Pending settings for dialog
+  const [pendingSettings, setPendingSettings] = useState<Omit<PlanSettings, 'id' | 'createdAt'>>({
+      selectedBooks: ['ket_level_1'],
+      planMode: 'count',
+      dailyLimit: 10,
+      daysTarget: 30,
+      learnOrder: 'alphabetical'
+  });
+
+  // Helper to get total words in selected books
+  const getSelectedWordCount = (bookIds: string[]) => {
+      return allBooks.filter(b => bookIds.includes(b.id)).reduce((acc, b) => acc + b.words.length, 0);
+  };
+
+  // Helper to recalculate on mode switch
+  const handleModeChange = (newMode: 'count' | 'days') => {
+      const total = getSelectedWordCount(pendingSettings.selectedBooks);
+      if (newMode === 'count') {
+          // Switch to Count mode. Calculate Daily based on current Days?
+          // Or keep daily as is? 
+          // Usually we want to preserve the *intent* of the previous calculation.
+          // If I set 30 days, I want to see how many words per day.
+          const days = pendingSettings.daysTarget || 30;
+          const daily = Math.ceil(total / days);
+          setPendingSettings(prev => ({...prev, planMode: newMode, dailyLimit: daily}));
+      } else {
+          // Switch to Days mode. Calculate Days based on current Daily.
+          const daily = pendingSettings.dailyLimit || 10;
+          const days = Math.ceil(total / daily);
+          setPendingSettings(prev => ({...prev, planMode: newMode, daysTarget: days}));
+      }
+  };
+
+  const [resettingBooks, setResettingBooks] = useState(false); // Mode to allow book change
 
   useEffect(() => {
     if (!user) {
       setLocation("/login");
       return;
     }
-    setReviewCount(getReviewQueue().length);
-  }, [user, settings.selectedBooks]);
+    
+    // Init pending settings from current plan if exists
+    if (plan) {
+        setPendingSettings({
+            selectedBooks: plan.selectedBooks,
+            planMode: plan.planMode,
+            dailyLimit: plan.dailyLimit,
+            daysTarget: plan.daysTarget,
+            learnOrder: plan.learnOrder
+        });
+    }
+
+    setReviewCount(getReviewTask('scientific').length);
+    setMistakeCount(getMistakesList('all').length);
+  }, [user, plan]); // Recalc on plan change
 
   if (!user) return null;
 
   const handleSettingsSave = () => {
-      // Check if critical plan details changed
-      const hasChanged = JSON.stringify(pendingSettings) !== JSON.stringify(settings);
-      if (hasChanged) {
-          setIsConfirmOpen(true);
-      } else {
+      // Logic handled in useVocabulary: savePlan will detect if reset is needed
+      // But we need to UI prompt.
+      // Check if Books changed strictly (removed or swapped) compared to current plan?
+      if (plan && !resettingBooks) {
+          // If in "Modify" mode, but user touched books? 
+          // The UI for books should be disabled unless "Reset" clicked.
+          // So if we are here, we just save modification.
+          savePlan(pendingSettings);
           setIsSettingsOpen(false);
+          toast.success("Plan updated!");
+      } else {
+          // Resetting books implies potential data loss.
+          // Check if books actually changed?
+          const oldSet = new Set(plan?.selectedBooks || []);
+          const newSet = new Set(pendingSettings.selectedBooks);
+          let changed = false;
+          // Logic: If user selected NEW books only -> Modify. 
+          // If user removed OLD books -> Reset.
+          // Req 3-4: "If books changed (not just added)..."
+          for (const b of oldSet) {
+              if (!newSet.has(b)) {
+                  changed = true; 
+                  break;
+              }
+          }
+          
+          if (changed || !plan) {
+              // If no plan, just save.
+              if (!plan) {
+                  savePlan(pendingSettings);
+                  setIsSettingsOpen(false);
+                  toast.success("Plan created!");
+              } else {
+                  // Prompt confirmation
+                  setIsConfirmResetOpen(true);
+              }
+          } else {
+              // Books added or same -> Modify
+              savePlan(pendingSettings);
+              setIsSettingsOpen(false);
+              toast.success("Plan updated (New books added)!");
+          }
       }
   };
 
-  const confirmSettings = () => {
-      setSettings(pendingSettings);
-      resetTodayProgress(); // Important: Reset daily progress for the new plan
-      setIsConfirmOpen(false);
+  const confirmReset = () => {
+      savePlan(pendingSettings); // Will trigger reset logic inside hook
+      setIsConfirmResetOpen(false);
       setIsSettingsOpen(false);
-      toast.success("Learning plan updated! Daily task reset.");
+      setResettingBooks(false);
+      toast.success("Plan reset! Previous progress cleared.");
   };
 
-  const handleAddMore = () => {
-      if (planStats.remaining <= 0) {
-          return toast.error("No more words in the selected books!");
+  const handleStartLearning = () => {
+      if (!plan) {
+          setIsSettingsOpen(true);
+          toast.info("Please set up a learning plan first.");
+          return;
       }
-      const addCount = 10;
-      if (confirm(`You've finished today's task. Learn ${addCount} more words?`)) {
-          addBonusWords(addCount);
-          toast.success(`Added ${addCount} words to today's goal!`);
-          setLocation('/learn');
-      }
+      setLocation('/learn');
   };
 
   const userAvatar = user.avatarId && AVATAR_MAP[user.avatarId] ? AVATAR_MAP[user.avatarId] : null;
-  const isGoalReached = planStats.learned >= planStats.effectiveDailyQuota;
+  const isGoalReached = stats ? (stats.todayLearned >= stats.dailyGoal) : false;
 
   return (
     <div className="min-h-screen bg-background p-6 flex flex-col max-w-md mx-auto relative overflow-hidden">
@@ -118,7 +195,7 @@ export default function Home() {
             )}
           </div>
           <div className="flex flex-col">
-            <h1 className="text-xl font-black text-foreground">Hi, {user.username}!</h1>
+            <h1 className="text-xl font-black text-foreground flex items-center">Hi, {user.username}! <span className="text-[10px] text-muted-foreground ml-2 px-1.5 py-0.5 bg-gray-100 rounded-md border">V6.2</span></h1>
             <p className="text-xs text-muted-foreground font-medium cursor-pointer hover:underline" onClick={logout}>
               Log out <span className="text-[10px] opacity-70">退出登录</span>
             </p>
@@ -138,35 +215,70 @@ export default function Home() {
                 </Button>
             )}
             
-            <Dialog open={isSettingsOpen} onOpenChange={(open) => { if (open) setPendingSettings(settings); setIsSettingsOpen(open); }}>
+            <Dialog open={isSettingsOpen} onOpenChange={(open) => { 
+                if (open) {
+                    if (plan) setPendingSettings({
+                        selectedBooks: plan.selectedBooks,
+                        planMode: plan.planMode,
+                        dailyLimit: plan.dailyLimit,
+                        daysTarget: plan.daysTarget,
+                        learnOrder: plan.learnOrder
+                    });
+                    setResettingBooks(false);
+                }
+                setIsSettingsOpen(open); 
+            }}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="icon" className="rounded-full shadow-sm">
                   <SettingsIcon className="w-5 h-5 text-muted-foreground" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-md rounded-3xl">
+              <DialogContent className="max-w-md rounded-3xl max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle className="text-2xl font-black">Plan Settings</DialogTitle>
                   <DialogDescription>Customize your learning journey / 学习计划设置</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-6 py-4">
                   <div className="space-y-3">
-                    <div className="flex items-baseline gap-2">
-                        <Label className="text-base font-black">1. Choose Books</Label>
-                        <span className="text-xs text-muted-foreground">选择词书</span>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-baseline gap-2">
+                            <Label className="text-base font-black">1. Choose Books</Label>
+                            <span className="text-xs text-muted-foreground">选择词书</span>
+                        </div>
+                        {plan && !resettingBooks && (
+                            <Button variant="ghost" size="sm" className="h-6 text-xs text-primary" onClick={() => setResettingBooks(true)}>
+                                <RefreshCcw className="w-3 h-3 mr-1" /> Reset Books
+                            </Button>
+                        )}
                     </div>
-                    <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                    
+                    <div className={`grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 ${plan && !resettingBooks ? 'opacity-50 pointer-events-none' : ''}`}>
                         {allBooks.map(b => (
                             <div key={b.id} className="flex items-center space-x-2 bg-white p-2 rounded-xl border">
                                 <Checkbox 
                                     id={`book-${b.id}`}
                                     checked={pendingSettings.selectedBooks.includes(b.id)}
                                     onCheckedChange={(checked) => {
+                                        const newBooks = checked 
+                                            ? [...pendingSettings.selectedBooks, b.id] 
+                                            : pendingSettings.selectedBooks.filter(id => id !== b.id);
+                                        
+                                        // Auto-recalculate based on current mode
+                                        const total = getSelectedWordCount(newBooks);
+                                        let newDaily = pendingSettings.dailyLimit;
+                                        let newDays = pendingSettings.daysTarget;
+
+                                        if (pendingSettings.planMode === 'count') {
+                                            newDays = Math.ceil(total / (newDaily || 1));
+                                        } else {
+                                            newDaily = Math.ceil(total / (newDays || 1));
+                                        }
+
                                         setPendingSettings(prev => ({
                                             ...prev,
-                                            selectedBooks: checked 
-                                                ? [...prev.selectedBooks, b.id]
-                                                : prev.selectedBooks.filter(id => id !== b.id)
+                                            selectedBooks: newBooks,
+                                            dailyLimit: newDaily,
+                                            daysTarget: newDays
                                         }));
                                     }}
                                 />
@@ -177,6 +289,7 @@ export default function Home() {
                             </div>
                         ))}
                     </div>
+                    {plan && !resettingBooks && <p className="text-[10px] text-muted-foreground italic">Click "Reset Books" to change selection (may clear progress).</p>}
                   </div>
                   
                   <div className="space-y-3">
@@ -184,7 +297,7 @@ export default function Home() {
                         <Label className="text-base font-black">2. Learning Target</Label>
                         <span className="text-xs text-muted-foreground">学习目标</span>
                       </div>
-                      <Tabs value={pendingSettings.planMode} onValueChange={(v) => setPendingSettings(prev => ({...prev, planMode: v as any}))}>
+                      <Tabs value={pendingSettings.planMode} onValueChange={(v) => handleModeChange(v as any)}>
                           <TabsList className="grid w-full grid-cols-2 rounded-xl bg-gray-100 p-1">
                               <TabsTrigger value="count" className="rounded-lg text-xs font-bold">Daily Count<br/><span className="scale-90 font-normal">每日词数</span></TabsTrigger>
                               <TabsTrigger value="days" className="rounded-lg text-xs font-bold">Target Days<br/><span className="scale-90 font-normal">计划天数</span></TabsTrigger>
@@ -194,8 +307,13 @@ export default function Home() {
                                   <span className="text-sm font-bold">Words Per Day</span>
                                   <Input 
                                       type="number" 
-                                      value={pendingSettings.dailyNewLimit}
-                                      onChange={(e) => setPendingSettings({...pendingSettings, dailyNewLimit: parseInt(e.target.value) || 5})}
+                                      value={pendingSettings.dailyLimit}
+                                      onChange={(e) => {
+                                          const val = parseInt(e.target.value) || 5;
+                                          const total = getSelectedWordCount(pendingSettings.selectedBooks);
+                                          const days = Math.ceil(total / val);
+                                          setPendingSettings({...pendingSettings, dailyLimit: val, daysTarget: days});
+                                      }}
                                       className="w-20 text-center font-black rounded-xl"
                                   />
                               </div>
@@ -205,8 +323,13 @@ export default function Home() {
                                   <span className="text-sm font-bold">Total Days</span>
                                   <Input 
                                       type="number" 
-                                      value={pendingSettings.planDaysTarget || 30}
-                                      onChange={(e) => setPendingSettings({...pendingSettings, planDaysTarget: parseInt(e.target.value) || 30})}
+                                      value={pendingSettings.daysTarget || 30}
+                                      onChange={(e) => {
+                                          const val = parseInt(e.target.value) || 1;
+                                          const total = getSelectedWordCount(pendingSettings.selectedBooks);
+                                          const daily = Math.ceil(total / val);
+                                          setPendingSettings({...pendingSettings, daysTarget: val, dailyLimit: daily});
+                                      }}
                                       className="w-20 text-center font-black rounded-xl"
                                   />
                               </div>
@@ -227,7 +350,7 @@ export default function Home() {
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="alpha">Alphabetical / 字母顺序</SelectItem>
+                            <SelectItem value="alphabetical">Alphabetical / 字母顺序</SelectItem>
                             <SelectItem value="random">Random / 随机顺序</SelectItem>
                         </SelectContent>
                     </Select>
@@ -241,27 +364,27 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Confirmation Dialog */}
-      <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+      {/* Confirmation Dialog for Reset */}
+      <Dialog open={isConfirmResetOpen} onOpenChange={setIsConfirmResetOpen}>
           <DialogContent className="max-w-xs rounded-3xl">
               <div className="p-4 text-center space-y-4">
                   <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto">
                       <AlertTriangle className="w-10 h-10" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="text-xl font-black leading-none">Update Plan?</h3>
-                    <p className="text-sm font-bold text-muted-foreground opacity-80">确认更新计划？</p>
+                    <h3 className="text-xl font-black leading-none">Reset Warning</h3>
+                    <p className="text-sm font-bold text-muted-foreground opacity-80">确认重置计划？</p>
                   </div>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                      Changing your plan will reset today's word list. Your overall progress and review history will be kept.
-                      <br/><span className="text-xs opacity-70">更新计划将重置今日任务。您的总进度和复习记录会被保留。</span>
+                      You removed book(s) from your plan. This will <span className="font-bold text-destructive">DELETE all progress</span> for this plan and start fresh.
+                      <br/><span className="text-xs opacity-70">您移除了部分词书。这将清空当前计划的所有进度并重新开始。</span>
                   </p>
                   <div className="flex flex-col gap-2">
-                      <Button onClick={confirmSettings} className="h-12 rounded-2xl font-black text-lg flex flex-col items-center justify-center leading-none">
-                        <span>Yes, Update It!</span>
-                        <span className="text-[10px] font-normal opacity-70">确认更新</span>
+                      <Button onClick={confirmReset} variant="destructive" className="h-12 rounded-2xl font-black text-lg flex flex-col items-center justify-center leading-none">
+                        <span>Yes, Reset All</span>
+                        <span className="text-[10px] font-normal opacity-70">确认重置</span>
                       </Button>
-                      <Button variant="ghost" onClick={() => setIsConfirmOpen(false)} className="rounded-2xl flex flex-col items-center justify-center leading-none text-muted-foreground">
+                      <Button variant="ghost" onClick={() => setIsConfirmResetOpen(false)} className="rounded-2xl flex flex-col items-center justify-center leading-none text-muted-foreground">
                         <span>Cancel</span>
                         <span className="text-[10px] font-normal opacity-70">取消</span>
                       </Button>
@@ -282,7 +405,7 @@ export default function Home() {
                 cx="50" cy="50" r="48" fill="none" stroke="currentColor" strokeWidth="2" 
                 className="text-primary transition-all duration-1000"
                 strokeDasharray="301.6"
-                strokeDashoffset={301.6 * (1 - (planStats.learned / Math.max(1, planStats.total)))}
+                strokeDashoffset={301.6 * (1 - (stats ? (stats.learnedUnique / Math.max(1, stats.totalWords)) : 0))}
                 strokeLinecap="round"
              />
           </svg>
@@ -291,32 +414,40 @@ export default function Home() {
         <div className="grid grid-cols-2 gap-4 w-full mb-8">
           <Card className="p-4 bg-white/50 backdrop-blur border-none shadow-sm flex flex-col items-center rounded-3xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-secondary/30">
-                <div className="h-full bg-secondary" style={{width: `${(planStats.learnedSelected / (planStats.totalSelected || 1)) * 100}%`}}></div>
+                <div className="h-full bg-secondary" style={{width: `${stats ? (stats.learnedUnique / (stats.totalWords || 1)) * 100 : 0}%`}}></div>
             </div>
             <div className="flex flex-col items-center justify-center h-full">
-                <div className="text-3xl font-black text-secondary leading-none">{planStats.learnedSelected} <span className="text-xs text-muted-foreground font-medium">/ {planStats.totalSelected}</span></div>
+                <div className="text-3xl font-black text-secondary leading-none">{stats?.learnedUnique || 0} <span className="text-xs text-muted-foreground font-medium">/ {stats?.totalWords || 0}</span></div>
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex flex-col items-center leading-none gap-0.5 mt-1">
-                    <span>Total Progress</span><span>累计学习</span>
+                    <span>Cumulative</span><span>累计学习</span>
                 </div>
-                {planStats.totalDays > 0 && (
-                    <div className="mt-2 text-[10px] bg-secondary/10 text-secondary px-2 py-0.5 rounded-full font-bold">
-                        Day {planStats.currentDay} / {planStats.totalDays}
-                    </div>
-                )}
             </div>
           </Card>
           <Card className="p-4 bg-white/50 backdrop-blur border-none shadow-sm flex flex-col items-center rounded-3xl relative overflow-hidden">
              <div className="absolute top-0 left-0 w-full h-1 bg-accent/30">
-                <div className="h-full bg-accent" style={{width: `${(planStats.effectiveDailyQuota > 0 ? (todayState.learnedCount / planStats.effectiveDailyQuota) * 100 : 0)}%`}}></div>
+                <div className="h-full bg-accent" style={{width: `${stats ? (stats.todayLearned / (stats.dailyGoal || 1)) * 100 : 0}%`}}></div>
              </div>
              <div className="flex flex-col items-center justify-center h-full">
                 <div className="flex items-baseline gap-1 leading-none">
-                    <span className="text-3xl font-black text-accent">{todayState.learnedCount}</span>
-                    <span className="text-sm font-bold text-muted-foreground">/ {planStats.effectiveDailyQuota}</span>
+                    <span className="text-3xl font-black text-accent">{stats?.todayLearned || 0}</span>
+                    <span className="text-sm font-bold text-muted-foreground">/ {stats?.dailyGoal || 0}</span>
                 </div>
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex flex-col items-center leading-none gap-0.5 mt-1">
                     <span>Today's Goal</span><span>今日目标</span>
                 </div>
+             </div>
+          </Card>
+          <Card className="col-span-2 p-4 bg-white/50 backdrop-blur border-none shadow-sm flex items-center justify-between rounded-3xl relative overflow-hidden px-6">
+             <div className="absolute top-0 left-0 w-full h-1 bg-green-500/30">
+                <div className="h-full bg-green-500" style={{width: `${stats ? (stats.daysSinceStart / (stats.daysTarget || 1)) * 100 : 0}%`}}></div>
+             </div>
+             <div className="flex flex-col items-start leading-none gap-1">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Days Learned / 累计天数</span>
+                <span className="text-2xl font-black text-green-600">{stats?.daysSinceStart || 0} Days</span>
+             </div>
+             <div className="text-right flex flex-col items-end leading-none gap-1">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Target / 计划天数</span>
+                <span className="text-xl font-bold text-muted-foreground">{stats?.daysTarget || 0} Days</span>
              </div>
           </Card>
         </div>
@@ -327,7 +458,7 @@ export default function Home() {
         {!isGoalReached ? (
             <Button 
                 className="w-full h-20 text-2xl font-black rounded-3xl shadow-xl shadow-primary/30 flex items-center justify-between px-8 hover:scale-105 transition-transform"
-                onClick={() => setLocation('/learn')}
+                onClick={handleStartLearning}
             >
                 <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
@@ -347,7 +478,7 @@ export default function Home() {
         ) : (
             <Button 
                 className="w-full h-20 text-2xl font-black rounded-3xl shadow-xl bg-secondary hover:bg-secondary/90 text-white flex items-center justify-between px-8 hover:scale-105 transition-transform"
-                onClick={handleAddMore}
+                onClick={() => setLocation('/learn')}
             >
                 <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
@@ -385,9 +516,9 @@ export default function Home() {
             <XCircle className="w-5 h-5 text-destructive mb-1" />
             <span className="text-[10px] leading-none">Errors</span>
             <span className="text-[9px] text-muted-foreground leading-none mt-0.5">错题</span>
-            {stats.mistakeCount > 0 && (
+            {mistakeCount > 0 && (
               <span className="absolute -top-1 -right-1 bg-destructive text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full">
-                {stats.mistakeCount}
+                {mistakeCount}
               </span>
             )}
           </Button>
