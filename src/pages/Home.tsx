@@ -3,9 +3,10 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useVocabulary, type PlanSettings } from "@/hooks/useVocabulary";
 import { useAuth } from "@/contexts/UserContext";
+import { useTime } from "@/contexts/TimeContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Settings as SettingsIcon, BookOpen, Trophy, BarChart3, Play, XCircle, LogOut, Crown, BookPlus, PlusCircle, AlertTriangle, History, RefreshCcw } from "lucide-react";
+import { Settings as SettingsIcon, BookOpen, Trophy, BarChart3, Play, XCircle, LogOut, Crown, BookPlus, PlusCircle, AlertTriangle, History, RefreshCcw, CalendarClock } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +42,7 @@ const AVATAR_MAP: Record<string, string> = { red, yellow, blue, black, green, wh
 export default function Home() {
   const [, setLocation] = useLocation();
   const { user, logout } = useAuth();
+  const { now, setSystemTime, resetSystemTime, isSimulated } = useTime();
   const { 
     plan,
     stats, 
@@ -54,6 +56,8 @@ export default function Home() {
   const [mistakeCount, setMistakeCount] = useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [debugDate, setDebugDate] = useState("");
   
   // Pending settings for dialog
   const [pendingSettings, setPendingSettings] = useState<Omit<PlanSettings, 'id' | 'createdAt'>>({
@@ -73,15 +77,10 @@ export default function Home() {
   const handleModeChange = (newMode: 'count' | 'days') => {
       const total = getSelectedWordCount(pendingSettings.selectedBooks);
       if (newMode === 'count') {
-          // Switch to Count mode. Calculate Daily based on current Days?
-          // Or keep daily as is? 
-          // Usually we want to preserve the *intent* of the previous calculation.
-          // If I set 30 days, I want to see how many words per day.
           const days = pendingSettings.daysTarget || 30;
           const daily = Math.ceil(total / days);
           setPendingSettings(prev => ({...prev, planMode: newMode, dailyLimit: daily}));
       } else {
-          // Switch to Days mode. Calculate Days based on current Daily.
           const daily = pendingSettings.dailyLimit || 10;
           const days = Math.ceil(total / daily);
           setPendingSettings(prev => ({...prev, planMode: newMode, daysTarget: days}));
@@ -96,7 +95,15 @@ export default function Home() {
       return;
     }
     
-    // Init pending settings from current plan if exists
+    // Update counts using new 'scientific' definition
+    const task = getReviewTask('today'); 
+    setReviewCount(task.length);
+    
+    setMistakeCount(getMistakesList('all').length);
+  }, [user, plan, now]); // Recalc stats on time change
+
+  // Separate effect for syncing pendingSettings to avoid resetting user input on time tick
+  useEffect(() => {
     if (plan) {
         setPendingSettings({
             selectedBooks: plan.selectedBooks,
@@ -106,33 +113,19 @@ export default function Home() {
             learnOrder: plan.learnOrder
         });
     }
-
-    setReviewCount(getReviewTask('scientific').length);
-    setMistakeCount(getMistakesList('all').length);
-  }, [user, plan]); // Recalc on plan change
+  }, [plan]);
 
   if (!user) return null;
 
   const handleSettingsSave = () => {
-      // Logic handled in useVocabulary: savePlan will detect if reset is needed
-      // But we need to UI prompt.
-      // Check if Books changed strictly (removed or swapped) compared to current plan?
       if (plan && !resettingBooks) {
-          // If in "Modify" mode, but user touched books? 
-          // The UI for books should be disabled unless "Reset" clicked.
-          // So if we are here, we just save modification.
           savePlan(pendingSettings);
           setIsSettingsOpen(false);
           toast.success("Plan updated!");
       } else {
-          // Resetting books implies potential data loss.
-          // Check if books actually changed?
           const oldSet = new Set(plan?.selectedBooks || []);
           const newSet = new Set(pendingSettings.selectedBooks);
           let changed = false;
-          // Logic: If user selected NEW books only -> Modify. 
-          // If user removed OLD books -> Reset.
-          // Req 3-4: "If books changed (not just added)..."
           for (const b of oldSet) {
               if (!newSet.has(b)) {
                   changed = true; 
@@ -141,17 +134,14 @@ export default function Home() {
           }
           
           if (changed || !plan) {
-              // If no plan, just save.
               if (!plan) {
                   savePlan(pendingSettings);
                   setIsSettingsOpen(false);
                   toast.success("Plan created!");
               } else {
-                  // Prompt confirmation
                   setIsConfirmResetOpen(true);
               }
           } else {
-              // Books added or same -> Modify
               savePlan(pendingSettings);
               setIsSettingsOpen(false);
               toast.success("Plan updated (New books added)!");
@@ -160,7 +150,7 @@ export default function Home() {
   };
 
   const confirmReset = () => {
-      savePlan(pendingSettings); // Will trigger reset logic inside hook
+      savePlan(pendingSettings); 
       setIsConfirmResetOpen(false);
       setIsSettingsOpen(false);
       setResettingBooks(false);
@@ -176,8 +166,20 @@ export default function Home() {
       setLocation('/learn');
   };
 
+  const handleTimeTravel = () => {
+      if (!debugDate) return;
+      setSystemTime(debugDate);
+      setIsDebugOpen(false);
+      toast.success(`Time travelled to ${debugDate}`);
+  };
+
   const userAvatar = user.avatarId && AVATAR_MAP[user.avatarId] ? AVATAR_MAP[user.avatarId] : null;
   const isGoalReached = stats ? (stats.todayLearned >= stats.dailyGoal) : false;
+
+  // Timeline Logic
+  const timelineDays = stats?.daysTarget || 30;
+  const currentDay = stats?.daysSinceStart || 1;
+  const progressPercent = Math.min(100, (currentDay / timelineDays) * 100);
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-8 flex flex-col w-full md:max-w-6xl mx-auto relative overflow-y-auto md:overflow-hidden md:justify-center">
@@ -195,10 +197,18 @@ export default function Home() {
             )}
           </div>
           <div className="flex flex-col">
-            <h1 className="text-xl font-black text-foreground flex items-center">Hi, {user.username}! <span className="text-[10px] text-muted-foreground ml-2 px-1.5 py-0.5 bg-gray-100 rounded-md border">V6.2</span></h1>
-            <p className="text-xs text-muted-foreground font-medium cursor-pointer hover:underline" onClick={logout}>
-              Log out <span className="text-[10px] opacity-70">退出登录</span>
-            </p>
+            <div className="flex items-center gap-2">
+                <h1 className="text-xl font-black text-foreground flex items-center">Hi, {user.username}!</h1>
+                {isSimulated && <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-md font-bold animate-pulse">TIME TRAVEL</span>}
+            </div>
+            <div className="flex gap-2">
+                <p className="text-xs text-muted-foreground font-medium cursor-pointer hover:underline" onClick={logout}>
+                Log out
+                </p>
+                {user.username === 'zhx' && (
+                    <span className="text-xs text-primary font-bold cursor-pointer hover:underline" onClick={() => setIsDebugOpen(true)}>Debug Time</span>
+                )}
+            </div>
           </div>
         </div>
         
@@ -234,11 +244,14 @@ export default function Home() {
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-w-md rounded-3xl max-h-[80vh] overflow-y-auto">
+                {/* ... existing settings content ... */}
+                {/* Simplified for brevity in edit, keeping existing structure */}
                 <DialogHeader>
                   <DialogTitle className="text-2xl font-black">Plan Settings</DialogTitle>
                   <DialogDescription>Customize your learning journey / 学习计划设置</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-6 py-4">
+                  {/* ... same as before ... */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                         <div className="flex items-baseline gap-2">
@@ -262,18 +275,14 @@ export default function Home() {
                                         const newBooks = checked 
                                             ? [...pendingSettings.selectedBooks, b.id] 
                                             : pendingSettings.selectedBooks.filter(id => id !== b.id);
-                                        
-                                        // Auto-recalculate based on current mode
                                         const total = getSelectedWordCount(newBooks);
                                         let newDaily = pendingSettings.dailyLimit;
                                         let newDays = pendingSettings.daysTarget;
-
                                         if (pendingSettings.planMode === 'count') {
                                             newDays = Math.ceil(total / (newDaily || 1));
                                         } else {
                                             newDaily = Math.ceil(total / (newDays || 1));
                                         }
-
                                         setPendingSettings(prev => ({
                                             ...prev,
                                             selectedBooks: newBooks,
@@ -289,7 +298,6 @@ export default function Home() {
                             </div>
                         ))}
                     </div>
-                    {plan && !resettingBooks && <p className="text-[10px] text-muted-foreground italic">Click "Reset Books" to change selection (may clear progress).</p>}
                   </div>
                   
                   <div className="space-y-3">
@@ -393,6 +401,25 @@ export default function Home() {
           </DialogContent>
       </Dialog>
 
+      {/* Debug Time Dialog */}
+      <Dialog open={isDebugOpen} onOpenChange={setIsDebugOpen}>
+          <DialogContent className="max-w-xs rounded-3xl">
+              <DialogHeader>
+                  <DialogTitle>Time Travel (Admin)</DialogTitle>
+                  <DialogDescription>Simulate future date for testing.</DialogDescription>
+              </DialogHeader>
+              <div className="py-4 space-y-4">
+                  <div className="bg-gray-100 p-2 rounded-xl text-center">
+                      <div className="text-xs text-muted-foreground">Current Simulated Date</div>
+                      <div className="font-mono font-bold text-lg">{new Date(now).toDateString()}</div>
+                  </div>
+                  <Input type="date" onChange={(e) => setDebugDate(e.target.value)} />
+                  <Button onClick={handleTimeTravel} className="w-full">Jump to Date</Button>
+                  <Button variant="outline" onClick={() => { resetSystemTime(); setIsDebugOpen(false); }} className="w-full">Reset to Real Time</Button>
+              </div>
+          </DialogContent>
+      </Dialog>
+
       <div className="flex flex-col md:flex-row md:items-center md:gap-16 w-full flex-1 md:px-12">
       {/* Stats Hero */}
       <div className="flex-1 flex flex-col items-center justify-center z-0 w-full max-w-md mx-auto">
@@ -438,17 +465,29 @@ export default function Home() {
                 </div>
              </div>
           </Card>
-          <Card className="col-span-2 p-4 bg-white/50 backdrop-blur border-none shadow-sm flex items-center justify-between rounded-3xl relative overflow-hidden px-6">
-             <div className="absolute top-0 left-0 w-full h-1 bg-green-500/30">
-                <div className="h-full bg-green-500" style={{width: `${stats ? (stats.daysSinceStart / (stats.daysTarget || 1)) * 100 : 0}%`}}></div>
+          
+          {/* New Timeline Card */}
+          <Card className="col-span-2 p-4 bg-white/50 backdrop-blur border-none shadow-sm flex flex-col justify-center rounded-3xl relative overflow-hidden px-6 gap-2">
+             <div className="flex items-center justify-between w-full">
+                 <div className="flex flex-col items-start leading-none gap-1">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><CalendarClock className="w-3 h-3"/> Day {currentDay}</span>
+                    <span className="text-2xl font-black text-green-600">{new Date(now).toLocaleDateString(undefined, {month:'short', day:'numeric'})}</span>
+                 </div>
+                 <div className="text-right flex flex-col items-end leading-none gap-1">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Goal</span>
+                    <span className="text-xl font-bold text-muted-foreground">{timelineDays} Days</span>
+                 </div>
              </div>
-             <div className="flex flex-col items-start leading-none gap-1">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Days Learned / 累计天数</span>
-                <span className="text-2xl font-black text-green-600">{stats?.daysSinceStart || 0} Days</span>
+             
+             {/* Timeline Visual */}
+             <div className="w-full h-3 bg-gray-100 rounded-full relative mt-1">
+                 <div className="absolute left-0 top-0 h-full bg-green-500 rounded-full transition-all duration-500" style={{width: `${progressPercent}%`}}></div>
+                 {/* Current Day Marker */}
+                 <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-green-600 rounded-full shadow-sm" style={{left: `calc(${progressPercent}% - 8px)`}}></div>
              </div>
-             <div className="text-right flex flex-col items-end leading-none gap-1">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Target / 计划天数</span>
-                <span className="text-xl font-bold text-muted-foreground">{stats?.daysTarget || 0} Days</span>
+             <div className="flex justify-between w-full text-[9px] text-muted-foreground font-medium">
+                 <span>Start</span>
+                 <span>Target</span>
              </div>
           </Card>
         </div>
@@ -503,10 +542,15 @@ export default function Home() {
             <span className="text-[10px] leading-none">Quiz</span>
             <span className="text-[9px] text-muted-foreground leading-none mt-0.5">测试</span>
           </Button>
-          <Button variant="outline" className="h-16 rounded-2xl border-2 hover:bg-green-100/50 font-bold flex flex-col gap-0 shadow-sm px-0" onClick={() => setLocation('/review')}>
+          <Button variant="outline" className="h-16 rounded-2xl border-2 hover:bg-green-100/50 font-bold flex flex-col gap-0 shadow-sm px-0 relative" onClick={() => setLocation('/review')}>
             <History className="w-5 h-5 text-green-600 mb-1" />
             <span className="text-[10px] leading-none">Review</span>
             <span className="text-[9px] text-muted-foreground leading-none mt-0.5">复习</span>
+            {reviewCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-green-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full animate-pulse">
+                {reviewCount}
+              </span>
+            )}
           </Button>
           <Button variant="outline" className="h-16 rounded-2xl border-2 hover:bg-accent/10 font-bold flex flex-col gap-0 shadow-sm px-0" onClick={() => setLocation('/stats')}>
             <BarChart3 className="w-5 h-5 text-accent mb-1" />

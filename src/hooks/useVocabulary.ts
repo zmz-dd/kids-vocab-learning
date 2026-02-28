@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/UserContext';
+import { useTime } from '@/contexts/TimeContext';
 import { nanoid } from 'nanoid';
 import builtinBooks from '@/assets/builtin_books.json';
 
@@ -28,7 +29,7 @@ export interface WordDetails {
 
 export interface UserProgress {
   status: 'new' | 'learning' | 'mastered';
-  stage: number; // 0-7 Ebbinghaus stage
+  stage: number; // 0-8 Ebbinghaus stage
   nextReview: number; // Timestamp
   lastReview: number; // Timestamp
   firstLearnedAt: number; // Timestamp when first learned (status changed from new)
@@ -72,14 +73,32 @@ export interface VocabBook {
   isBuiltIn?: boolean;
 }
 
-// Ebbinghaus Intervals (minutes)
-const INTERVALS = [5, 30, 12 * 60, 24 * 60, 2 * 24 * 60, 4 * 24 * 60, 7 * 24 * 60, 15 * 24 * 60];
+// Scientific Review Intervals (minutes) - Customized for User
+// Schedule:
+// Learn (Mar 1) -> Review 0 (Mar 1, Same Day)
+// Review 0 -> Review 1 (Mar 2, +1d)
+// Review 1 -> Review 2 (Mar 3, +1d)
+// Review 2 -> Review 3 (Mar 5, +2d)
+// Review 3 -> Review 4 (Mar 8, +3d)
+// Review 4 -> Review 5 (Mar 15, +7d)
+// Review 5 -> Review 6 (Mar 22, +7d)
+
+const INTERVALS = [
+    0,              // Stage 0: Same day (Immediate)
+    24 * 60,        // Stage 1: +1 day
+    24 * 60,        // Stage 2: +1 day
+    2 * 24 * 60,    // Stage 3: +2 days
+    3 * 24 * 60,    // Stage 4: +3 days
+    7 * 24 * 60,    // Stage 5: +7 days
+    7 * 24 * 60     // Stage 6: +7 days
+];
 
 const STORAGE_KEY_CUSTOM_BOOKS = 'kids_vocab_custom_books_v3';
 const STORAGE_KEY_WORD_OVERRIDES = 'kids_vocab_word_overrides_v1';
 
 export function useVocabulary() {
   const { user } = useAuth();
+  const { now } = useTime(); // Use global simulated time
   
   // --- Global State (Shared across users in browser, but independent logic) ---
   const [customBooks, setCustomBooks] = useState<VocabBook[]>(() => {
@@ -94,7 +113,7 @@ export function useVocabulary() {
   // --- User Specific State ---
   const [plan, setPlan] = useState<PlanSettings | null>(null);
   const [progress, setProgress] = useState<ProgressMap>({});
-  const [planState, setPlanState] = useState<PlanState>({ todayDate: new Date().toDateString(), todayLearnedCount: 0, todayMistakes: [] });
+  const [planState, setPlanState] = useState<PlanState>({ todayDate: new Date(now).toDateString(), todayLearnedCount: 0, todayMistakes: [] });
   const [testHistory, setTestHistory] = useState<TestRecord[]>([]);
 
   // Keys
@@ -106,42 +125,65 @@ export function useVocabulary() {
   useEffect(() => {
     if (!user) return;
     
-    const savedPlan = localStorage.getItem(planKey!);
-    if (savedPlan) {
-        const p = JSON.parse(savedPlan);
-        // Migration check if needed, else set
-        setPlan(p);
-        
-        // Load plan state
-        const savedState = localStorage.getItem(`${planKey}_state`);
-        if (savedState) {
-            const s = JSON.parse(savedState);
-            if (s.todayDate !== new Date().toDateString()) {
-                // New Day -> Reset counters and todayMistakes
-                setPlanState({ todayDate: new Date().toDateString(), todayLearnedCount: 0, todayMistakes: [] });
-            } else {
-                setPlanState(s);
-            }
-        } else {
-            setPlanState({ todayDate: new Date().toDateString(), todayLearnedCount: 0, todayMistakes: [] });
-        }
-    } else {
-        setPlan(null); // No plan yet
+    try {
+      const savedPlan = localStorage.getItem(planKey!);
+      if (savedPlan) {
+          const p = JSON.parse(savedPlan);
+          setPlan(p);
+          
+          // Load plan state
+          const savedState = localStorage.getItem(`${planKey}_state`);
+          if (savedState) {
+              const s = JSON.parse(savedState);
+              const todayStr = new Date(now).toDateString();
+              if (s.todayDate !== todayStr) {
+                  setPlanState({ todayDate: todayStr, todayLearnedCount: 0, todayMistakes: [] });
+              } else {
+                  setPlanState(s);
+              }
+          } else {
+              setPlanState({ todayDate: new Date(now).toDateString(), todayLearnedCount: 0, todayMistakes: [] });
+          }
+      } else {
+          setPlan(null); 
+      }
+
+      const savedProgress = localStorage.getItem(progressKey!);
+      setProgress(savedProgress ? JSON.parse(savedProgress) : {});
+
+      const savedHistory = localStorage.getItem(historyKey!);
+      setTestHistory(savedHistory ? JSON.parse(savedHistory) : []);
+    } catch (e) {
+      console.error("Error loading vocabulary data", e);
     }
-
-    const savedProgress = localStorage.getItem(progressKey!);
-    setProgress(savedProgress ? JSON.parse(savedProgress) : {});
-
-    const savedHistory = localStorage.getItem(historyKey!);
-    setTestHistory(savedHistory ? JSON.parse(savedHistory) : []);
-
   }, [user, planKey, progressKey, historyKey]);
 
-  // --- Save Data ---
-  useEffect(() => { if (user && plan) localStorage.setItem(planKey!, JSON.stringify(plan)); }, [plan, planKey, user]);
-  useEffect(() => { if (user && plan) localStorage.setItem(`${planKey}_state`, JSON.stringify(planState)); }, [planState, planKey, user, plan]);
-  useEffect(() => { if (user) localStorage.setItem(progressKey!, JSON.stringify(progress)); }, [progress, progressKey, user]);
-  useEffect(() => { if (user) localStorage.setItem(historyKey!, JSON.stringify(testHistory)); }, [testHistory, historyKey, user]);
+  // --- Save Data Helpers ---
+  // Manual save to avoid auto-save race conditions
+  const savePlanToStorage = (p: PlanSettings) => {
+      if (user && planKey) localStorage.setItem(planKey, JSON.stringify(p));
+  };
+  const savePlanStateToStorage = (ps: PlanState) => {
+      if (user && planKey) localStorage.setItem(`${planKey}_state`, JSON.stringify(ps));
+  };
+  const saveProgressToStorage = (p: ProgressMap) => {
+      if (user && progressKey) localStorage.setItem(progressKey, JSON.stringify(p));
+  };
+  const saveHistoryToStorage = (h: TestRecord[]) => {
+      if (user && historyKey) localStorage.setItem(historyKey, JSON.stringify(h));
+  };
+
+  const currentDayStr = new Date(now).toDateString();
+  useEffect(() => {
+      if (!user || !plan) return;
+      if (planState.todayDate !== currentDayStr) {
+          const newState = { todayDate: currentDayStr, todayLearnedCount: 0, todayMistakes: [] };
+          setPlanState(newState);
+          savePlanStateToStorage(newState);
+      }
+  }, [currentDayStr, user, plan]);
+
+  // --- Auto-save for Global Settings only ---
   useEffect(() => { localStorage.setItem(STORAGE_KEY_CUSTOM_BOOKS, JSON.stringify(customBooks)); }, [customBooks]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_WORD_OVERRIDES, JSON.stringify(wordOverrides)); }, [wordOverrides]);
 
@@ -172,21 +214,15 @@ export function useVocabulary() {
       const totalWords = planWords.length;
       const remaining = totalWords - learnedUnique;
       
-      // Calculate effective daily goal
       let dailyGoal = plan.dailyLimit;
-      if (plan.planMode === 'days' && plan.daysTarget && plan.daysTarget > 0) {
-          // Recalculate daily goal based on remaining words and days? 
-          // Or just static? Requirement 3-4 says "auto calculate".
-          // Let's stick to the stored dailyLimit which should be calculated at set time, 
-          // OR recalculate dynamically if we want "adaptive". 
-          // Simple approach: Use stored dailyLimit.
-      }
-
-      // Check if plan finished
+      
       const isFinished = remaining === 0;
 
-      // Calculate days progress
-      const daysSinceStart = Math.max(1, Math.ceil((Date.now() - plan.createdAt) / (1000 * 60 * 60 * 24)));
+      // Calculate days progress correctly using Calendar Days
+      const startDate = new Date(plan.createdAt).setHours(0,0,0,0);
+      const currentDate = new Date(now).setHours(0,0,0,0);
+      const daysSinceStart = Math.max(1, Math.floor((currentDate - startDate) / (1000 * 60 * 60 * 24)) + 1);
+      
       const daysTarget = plan.planMode === 'days' ? plan.daysTarget : Math.ceil(totalWords / (plan.dailyLimit || 1));
 
       return {
@@ -197,9 +233,10 @@ export function useVocabulary() {
           todayLearned: planState.todayLearnedCount,
           isFinished,
           daysSinceStart,
-          daysTarget: daysTarget || 1
+          daysTarget: daysTarget || 1,
+          createdAt: plan.createdAt // Expose for Timeline
       };
-  }, [plan, planWords, progress, planState.todayLearnedCount]);
+  }, [plan, planWords, progress, planState.todayLearnedCount, now]);
 
   // --- Actions ---
 
@@ -209,9 +246,6 @@ export function useVocabulary() {
       const newBookSet = new Set(settings.selectedBooks);
       const oldBookSet = new Set(plan?.selectedBooks || []);
       
-      // Check if book scope changed (Removed any? Swapped?)
-      // If new is strict superset or same -> Modify
-      // If any old book is missing in new -> Reset
       let isReset = false;
       if (plan) {
           for (const book of oldBookSet) {
@@ -225,41 +259,32 @@ export function useVocabulary() {
       }
 
       if (isReset) {
-          // New Plan ID, Clear Data?
-          // Req 3-4: "Clear original plan's learning data... confirm dialog".
-          // The confirmation UI should handle the prompt. Here we execute.
           const newId = nanoid();
-          setPlan({
+          const newPlan = {
               ...settings,
               id: newId,
-              createdAt: Date.now()
-          });
-          // Clear progress for current user? 
-          // Req: "Clear original plan's learning data". 
-          // This implies clearing 'progress' map entirely or filtering it?
-          // Since progress is keyed by word, and we might select new books with same words...
-          // If we reset, we usually expect to start fresh.
-          // Let's clear progress map.
+              createdAt: now // Use simulated time for creation
+          };
+          setPlan(newPlan);
+          savePlanToStorage(newPlan);
+          
           setProgress({});
-          setPlanState({ todayDate: new Date().toDateString(), todayLearnedCount: 0, todayMistakes: [] });
-          setTestHistory([]); // Clear history? Req doesn't specify, but implies "Clear all data".
+          saveProgressToStorage({});
+
+          const newState = { todayDate: new Date(now).toDateString(), todayLearnedCount: 0, todayMistakes: [] };
+          setPlanState(newState);
+          savePlanStateToStorage(newState);
+          
+          setTestHistory([]); 
+          saveHistoryToStorage([]);
       } else {
-          // Modify Mode
-          // Keep ID, Keep Progress.
-          // Update settings (e.g. daily limit, order, added books)
           if (plan) {
-              setPlan({
+              const updated = {
                   ...plan,
                   ...settings
-              });
-              // Reset today count? Req 3-4: "Plan modified -> Recalculate... effective immediately".
-              // "Today Learned" is factual. Should we reset it? 
-              // Req 3-4: "Reset 'Today Learned' to 0" on modification? 
-              // Re-read 3-4: "If modified... plan number remains... reserve record... re-plan remaining".
-              // Only if "Reset Books" (Reset Mode) it says "Clear data".
-              // For modification: "Retain current book learned records". 
-              // Does not explicitly say reset Today count. But usually changing daily limit implies new day start?
-              // Let's NOT reset today count for minor mods, only for full reset.
+              };
+              setPlan(updated);
+              savePlanToStorage(updated);
           }
       }
   };
@@ -267,38 +292,31 @@ export function useVocabulary() {
   const getTodayTask = useCallback(() => {
       if (!plan) return [];
       
-      // 1. Filter unlearned words from selected books
-      // "Strict adherence" - logic in planWords already does this.
       let unlearned = planWords.filter(w => !progress[w.word] || progress[w.word].status === 'new');
       
-      // 2. Sort
       if (plan.learnOrder === 'random') {
           unlearned = unlearned.sort(() => Math.random() - 0.5);
       } else {
           unlearned = unlearned.sort((a, b) => a.word.localeCompare(b.word));
       }
       
-      // 3. Limit?
-      // Req 4-3: "Click Start -> Load ALL words for the day... e.g. 99".
-      // "If quit at 8, resume at 9".
-      // So we need to return (DailyGoal - TodayLearned) words.
       const remainingQuota = Math.max(0, plan.dailyLimit - planState.todayLearnedCount);
       
       return unlearned.slice(0, remainingQuota);
   }, [plan, planWords, progress, planState.todayLearnedCount]);
 
-  // Shared Logic for recording mistakes
-  // This ensures consistent behavior across Learn, Review, and Test
   const recordMistake = (word: string) => {
-      setPlanState(ps => ({
-          ...ps,
-          todayMistakes: ps.todayMistakes.includes(word) ? ps.todayMistakes : [...ps.todayMistakes, word]
-      }));
+      setPlanState(ps => {
+          const newState = {
+              ...ps,
+              todayMistakes: ps.todayMistakes.includes(word) ? ps.todayMistakes : [...ps.todayMistakes, word]
+          };
+          savePlanStateToStorage(newState);
+          return newState;
+      });
   };
 
   const recordLearnResult = (word: string, result: 'know' | 'dont-know') => {
-      const today = new Date().toDateString();
-      
       // Update Progress
       setProgress(prev => {
           const current = prev[word] || { 
@@ -315,33 +333,43 @@ export function useVocabulary() {
           // First time learning?
           if (newState.status === 'new') {
               newState.status = 'learning';
-              newState.firstLearnedAt = Date.now();
-              // Increment Today Learned Count immediately (Req 4-1)
-              setPlanState(ps => ({
-                  ...ps,
-                  todayLearnedCount: ps.todayLearnedCount + 1
-              }));
+              newState.firstLearnedAt = now;
+              // Reset to stage 0 for "Same Day" review
+              newState.stage = 0;
+              newState.nextReview = now; // Immediate review today
+
+              setPlanState(ps => {
+                  const newPs = { ...ps, todayLearnedCount: ps.todayLearnedCount + 1 };
+                  savePlanStateToStorage(newPs);
+                  return newPs;
+              });
           }
           
-          newState.lastReview = Date.now();
+          newState.lastReview = now;
           
           if (result === 'dont-know') {
               // Error
               newState.errorCount += 1;
               newState.stage = 0; // Reset stage
-              newState.nextReview = Date.now() + 5 * 60 * 1000; // 5 min review
+              newState.nextReview = now; // Immediate retry
               
               // Add to Today Mistakes
               recordMistake(word);
           } else {
               // Know
-              // Advance stage
-              newState.stage = Math.min(newState.stage + 1, INTERVALS.length - 1);
-              newState.nextReview = Date.now() + INTERVALS[newState.stage] * 60 * 1000;
-              if (newState.stage >= 5) newState.status = 'mastered'; // Simple mastery rule
+              // For a word currently in 'learning' status (just learned today),
+              // we want it to stay at Stage 0 so it appears in "Review Today" list.
+              // If it's a re-learn of an old word, maybe different? 
+              // Assuming this function is primarily for the "Learn New Words" flow:
+              if (newState.status === 'learning') {
+                  newState.stage = 0;
+                  newState.nextReview = now;
+              }
           }
           
-          return { ...prev, [word]: newState };
+          const newProgress = { ...prev, [word]: newState };
+          saveProgressToStorage(newProgress);
+          return newProgress;
       });
   };
 
@@ -358,58 +386,68 @@ export function useVocabulary() {
   }, [plan, planWords, progress]);
 
   const getReviewTask = useCallback((mode: 'today' | 'scientific') => {
-      const todayStart = new Date(new Date().toDateString()).getTime();
-      
       if (mode === 'today') {
-          // Req 6: "Today's learned words"
-          // Words where lastReview >= todayStart
+          // Scientific Review: All Due/Overdue words
+          // "Scientific Review Task... count decreases by 1" logic implies words disappear when completed
+          return planWords.filter(w => {
+              const p = progress[w.word];
+              if (!p || p.status === 'new' || p.status === 'mastered') return false;
+              return p.nextReview <= now;
+          });
+      } else {
+          // Fallback (All Learned Today)
+          const todayStart = new Date(now).setHours(0,0,0,0);
           return planWords.filter(w => {
               const p = progress[w.word];
               return p && p.lastReview >= todayStart;
           });
-      } else {
-          // Scientific
-          return planWords.filter(w => {
-              const p = progress[w.word];
-              return p && p.status !== 'new' && p.nextReview <= Date.now();
-          });
       }
-  }, [planWords, progress]);
+  }, [planWords, progress, now]);
 
   const recordReviewResult = useCallback((word: string, result: 'know' | 'dont-know', mode: 'today' | 'scientific') => {
-      // Req 6: "Don't know -> Today Mistakes"
-      // "Know -> Remove from today's review task" (This is UI logic mainly, but state update helps)
       
       setProgress(prev => {
           const current = prev[word];
           if (!current) return prev; // Should not happen
           
           let newState = { ...current };
-          newState.lastReview = Date.now();
+          newState.lastReview = now;
           
           if (result === 'dont-know') {
               newState.errorCount += 1;
-              newState.stage = 0; // Reset stage on fail
-              newState.nextReview = Date.now() + 5 * 60 * 1000;
+              newState.stage = 0; // Reset progress
+              
+              // User Request: "Decrease today's review task count by 1" even if wrong.
+              // So we consider this "attempted" for today and push the re-review to tomorrow.
+              // Otherwise, it stays in the list and the count doesn't decrease.
+              newState.nextReview = now + 24 * 60 * 60 * 1000; 
+              
               recordMistake(word);
           } else {
-              // Scientific mode: Success advances stage
-              if (mode === 'scientific') {
-                  newState.stage = Math.min(newState.stage + 1, INTERVALS.length - 1);
-                  newState.nextReview = Date.now() + INTERVALS[newState.stage] * 60 * 1000;
+              // Success: Advance stage
+              const nextStage = newState.stage + 1;
+              
+              if (nextStage >= INTERVALS.length) {
+                  newState.status = 'mastered';
+                  newState.stage = nextStage; 
+                  newState.nextReview = 8640000000000; // Far future
+              } else {
+                  newState.stage = nextStage;
+                  newState.nextReview = now + INTERVALS[nextStage] * 60 * 1000;
               }
-              // Today mode: Just verification
           }
           
-          return { ...prev, [word]: newState };
+          const newProgress = { ...prev, [word]: newState };
+          saveProgressToStorage(newProgress);
+          return newProgress;
       });
-  }, []);
+  }, [now, user, progressKey]);
 
   const recordTestResult = useCallback((word: string, isCorrect: boolean) => {
       if (!isCorrect) {
           setProgress(prev => {
               const current = prev[word] || { 
-                  status: 'new', // Should not happen in test usually unless unlearned
+                  status: 'new',
                   stage: 0, 
                   nextReview: 0, 
                   lastReview: 0, 
@@ -419,23 +457,26 @@ export function useVocabulary() {
               
               let newState = { ...current };
               newState.errorCount += 1;
-              // Should we reset stage here too? Usually Test failure is significant.
-              // Let's assume yes, punishment for forgetting.
-              newState.stage = Math.max(0, newState.stage - 1); 
-              newState.lastReview = Date.now();
+              newState.stage = 0; // Reset to 0 on test fail
+              newState.nextReview = now; // Immediate re-test? Or tomorrow? Test usually implies check.
+              // Let's keep it 'now' for Test mode unless user complains. 
+              // Actually Test mode isn't the Review Task.
+              
+              newState.lastReview = now;
               
               recordMistake(word);
-              return { ...prev, [word]: newState };
+              const newProgress = { ...prev, [word]: newState };
+              saveProgressToStorage(newProgress);
+              return newProgress;
           });
       }
-  }, []);
+  }, [now, user, progressKey]);
 
   const getMistakesList = useCallback((filter: 'all' | 'today' | 'high-freq') => {
       const list = planWords.filter(w => {
           const p = progress[w.word];
           if (!p || p.errorCount === 0) return false;
           if (filter === 'today') {
-              // Check if in todayMistakes list
               return planState.todayMistakes.includes(w.word);
           }
           if (filter === 'high-freq') {
@@ -444,17 +485,31 @@ export function useVocabulary() {
           return true; // all
       });
       
-      // Sort
       if (filter === 'high-freq' || filter === 'all') {
           return list.sort((a, b) => (progress[b.word]?.errorCount || 0) - (progress[a.word]?.errorCount || 0));
       }
       return list;
   }, [planWords, progress, planState.todayMistakes]);
 
+  // Helper to get stage label for Review List
+  const getStageLabel = (stage: number) => {
+      const labels = [
+          "Same Day / 当天", 
+          "1 Day / 1天后", 
+          "2 Days / 2天后", 
+          "4 Days / 4天后", 
+          "7 Days / 7天后", 
+          "14 Days / 14天后", 
+          "21 Days / 21天后"
+      ];
+      if (stage >= labels.length) return "Mastered / 已掌握";
+      return labels[stage] || "Unknown";
+  };
+
   return {
       plan,
       stats,
-      planState, // Exported for direct access if needed
+      planState, 
       savePlan,
       getTodayTask,
       fetchRawNewWords,
@@ -463,8 +518,9 @@ export function useVocabulary() {
       recordReviewResult,
       recordTestResult,
       getMistakesList,
+      getStageLabel,
       allBooks,
       customBooks,
-      progress // exposed for Leaderboard
+      progress 
   };
 }
